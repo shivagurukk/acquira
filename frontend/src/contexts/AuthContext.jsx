@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import api from '../api/axios';
 import { invalidateApiCache } from '../api/apiCache';
 import { clearAuthStorage } from '../utils/authStorage';
@@ -27,13 +27,15 @@ export const AuthProvider = ({ children }) => {
         let menus = [];
         let tenants = [];
         let roles = [];
+        let permissions = [];
 
         try { menus = JSON.parse(localStorage.getItem('menus') || '[]'); } catch (e) { /* ignore */ }
         try { tenants = JSON.parse(localStorage.getItem('allowedTenants') || '[]'); } catch (e) { /* ignore */ }
         try { roles = JSON.parse(localStorage.getItem('roles') || '[]'); } catch (e) { /* ignore */ }
+        try { permissions = JSON.parse(localStorage.getItem('permissions') || '[]'); } catch (e) { /* ignore */ }
 
         return {
-            token, refreshToken, username, userRole, roles, tenants, activeTenantId, menus,
+            token, refreshToken, username, userRole, roles, tenants, activeTenantId, menus, permissions,
             sessionTimeoutMinutes,
             isAuthenticated: !!token,
             // Restored from storage so a page refresh cannot clear the
@@ -54,6 +56,7 @@ export const AuthProvider = ({ children }) => {
             localStorage.setItem('menus', JSON.stringify(auth.menus || []));
             localStorage.setItem('allowedTenants', JSON.stringify(auth.tenants || []));
             localStorage.setItem('roles', JSON.stringify(auth.roles || []));
+            localStorage.setItem('permissions', JSON.stringify(auth.permissions || []));
             localStorage.setItem('sessionTimeoutMinutes', String(auth.sessionTimeoutMinutes || 30));
             localStorage.setItem('mustChangePassword', String(!!auth.mustChangePassword));
         }
@@ -69,6 +72,7 @@ export const AuthProvider = ({ children }) => {
             tenants: data.allowedTenants || [],
             activeTenantId: data.defaultTenantId,
             menus: data.menus || [],
+            permissions: data.permissions || [],
             sessionTimeoutMinutes: Number(data.sessionTimeoutMinutes) || 30,
             isAuthenticated: true,
             mustChangePassword: data.mustChangePassword || false,
@@ -97,13 +101,14 @@ export const AuthProvider = ({ children }) => {
             // Tight timeout: the login tenant-picker disables every button until
             // this settles, so a hung backend must fail fast, not freeze the modal.
             const res = await api.post('/auth/switch-context', { tenantId: numericTenantId }, { timeout: 15000 });
-            const { menus, activeTenantId: confirmedId, groupName, roleInTenant, sessionTimeoutMinutes } = res.data;
+            const { menus, permissions, activeTenantId: confirmedId, groupName, roleInTenant, sessionTimeoutMinutes } = res.data;
 
             const newTenantId = confirmedId || numericTenantId;
 
             // 1. Update localStorage FIRST so the axios interceptor sends the new X-Tenant-Id
             localStorage.setItem('defaultTenantId', String(newTenantId));
             localStorage.setItem('menus', JSON.stringify(menus || []));
+            localStorage.setItem('permissions', JSON.stringify(permissions || []));
 
             // Drop cached filter-option/data-bounds lists — they are tenant-scoped
             // and the cache keys off defaultTenantId, but clearing is explicit and
@@ -116,6 +121,10 @@ export const AuthProvider = ({ children }) => {
                 ...prev,
                 activeTenantId: String(newTenantId),
                 menus: menus || prev.menus,
+                // Grants are per tenant, so the permission set must be replaced on a
+                // switch, never merged -- keeping the previous tenant's permissions
+                // would leave buttons enabled that the new tenant does not allow.
+                permissions: permissions || [],
                 sessionTimeoutMinutes: Number(sessionTimeoutMinutes) || prev.sessionTimeoutMinutes || 30,
                 tenantVersion: (prev.tenantVersion || 0) + 1,
             }));
@@ -133,7 +142,7 @@ export const AuthProvider = ({ children }) => {
         clearAuthStorage();
         setAuth({
             token: null, refreshToken: null, username: '', userRole: '', roles: [],
-            tenants: [], activeTenantId: null, menus: [], isAuthenticated: false,
+            tenants: [], activeTenantId: null, menus: [], permissions: [], isAuthenticated: false,
             tenantVersion: 0,
         });
     }, []);
@@ -243,10 +252,33 @@ export const AuthProvider = ({ children }) => {
         return prefix + formatted;
     }, [currencySymbol, currencyCode, currencyDecimals]);
 
+    // ===== Screen / action permissions =====
+    // can('sales.agents', 'EDIT') — the same menu_key + action the backend
+    // checks, so a control is offered only where the API will accept it.
+    // This is presentation only: the server re-checks every call, and a user
+    // who forges a permission into localStorage gains nothing but visible
+    // buttons that 403.
+    const permissionSet = useMemo(
+        () => new Set(Array.isArray(auth.permissions) ? auth.permissions : []),
+        [auth.permissions]);
+
+    const can = useCallback((menuKey, action = 'VIEW') => {
+        if (!menuKey) return false;
+        if (isSuperAdmin) return true;
+        return permissionSet.has(`${menuKey}:${String(action).toUpperCase()}`);
+    }, [permissionSet, isSuperAdmin]);
+
+    /** Path form, for call sites that still hold a route: '/sales/agents' -> 'sales.agents'. */
+    const canPath = useCallback((path, action = 'VIEW') => {
+        if (!path) return false;
+        return can(path.replace(/^\//, '').replace(/\//g, '.'), action);
+    }, [can]);
+
     const value = {
         ...auth,
         login, switchTenant, logout, clearMustChangePassword,
         isSuperAdmin, isAdmin, activeTenant,
+        can, canPath,
         // #16: Currency
         currencyCode, currencySymbol, currencyDecimals, formatCurrency,
         // Bank's own country — local conventions (e.g. which days are the weekend)

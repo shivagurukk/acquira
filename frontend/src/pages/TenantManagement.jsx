@@ -246,7 +246,7 @@ const TenantManagement = ({ embedded = false }) => {
                     <FormField
                         label="Feed amount format"
                         required
-                        hint="CMM: feed sends minor units (e.g. fils/cents) and amounts are divided at ingest. AMS: feed sends final decimal amounts — no division. Applies to file uploads and scheduled pulls."
+                        hint="CMM: feed sends minor units (e.g. fils/cents) and amounts are divided at ingest. AMS: feed sends final decimal amounts — no division. One switch for all three ingest paths: file upload, server-file processing and scheduled integration pulls."
                     >
                         <Select
                             value={currentTenant.inputFormat || 'CMM'}

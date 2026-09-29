@@ -25,7 +25,7 @@ public class SalesTeamController {
     }
 
     // Also read by the executive sales screen, so either grant passes.
-    @PreAuthorize("@menuAccess.canAccess('/sales/team-management') or @menuAccess.canAccess('/executive/sales')")
+    @PreAuthorize("@menuAccess.canAccess('/sales/team-management') or @menuAccess.canAccess('/sales/executive')")
     @GetMapping("/team-leads")
     public ResponseEntity<List<SalesTeamMapping>> getTeamLeads() {
         return ResponseEntity.ok(salesTeamService.getTeamLeads(getTenantId()));

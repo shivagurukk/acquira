@@ -95,7 +95,7 @@ const GROUPS = [
     {
         group: 'Data & Integrations',
         items: [
-            { key: 's3',           label: 'Report Storage (S3)',   icon: HardDrive, keywords: 's3 bucket storage archive report', el: <S3Settings /> },
+            { key: 's3',           label: 'Report Storage (S3)',   icon: HardDrive, keywords: 's3 bucket storage archive report upload delete files maintenance', el: <S3Settings /> },
             { key: 'integrations', label: 'External Integrations', icon: Plug,      keywords: 'integration oracle sql server connection schedule', el: <IntegrationHub /> },
             { key: 'api-keys',     label: 'API Keys',              icon: KeyRound,  keywords: 'api key external x-api-key token', el: <ApiManagement /> },
             { key: 'webhooks',     label: 'Webhooks',              icon: Plug,      keywords: 'webhook event push notification hmac signature delivery', el: <Webhooks /> },

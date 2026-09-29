@@ -89,4 +89,14 @@ public class IntegrationSchedule {
     /** Statuses of the last few runs, most recent first — for the mini history dots. */
     @Transient
     private java.util.List<String> recentRunStatuses;
+
+    /**
+     * True when this schedule's most recent run is genuinely in flight (status
+     * RUNNING and started within the live window, so an orphaned RUNNING row
+     * does not wedge it). The UI disables "Run now" on EVERY schedule of a
+     * tenant while any one is running — only one pull per tenant may execute at
+     * a time (the backend enforces this with a per-tenant lock).
+     */
+    @Transient
+    private boolean running;
 }

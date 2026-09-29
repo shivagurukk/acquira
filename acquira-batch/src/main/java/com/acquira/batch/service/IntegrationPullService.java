@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -609,6 +610,32 @@ public class IntegrationPullService {
             }
         } catch (Exception e) {
             log.warn("[Integration] Startup reaper could not run (non-fatal): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Periodic sibling of {@link #reapInterruptedRuns()} for a process that
+     * stays up: a pull whose thread died (OOM, task rejected after the run log
+     * was written, an uncaught error before finishRunLog) would otherwise show
+     * RUNNING forever and — until it aged past the UI's 3h live window — keep
+     * every "Run now" disabled and block new pulls for the tenant. A genuine
+     * pull polls its batch job for at most 2h (JOB_POLL_TIMEOUT_MS), so a
+     * RUNNING/RETRYING row untouched for 3h is dead. Runs every 15 minutes.
+     */
+    @Scheduled(fixedDelay = 15L * 60L * 1000L)
+    public void reapStaleRuns() {
+        try {
+            int runs = jdbcTemplate.update(
+                "UPDATE integration_run_log SET status = 'FAILED', end_time = CURRENT_TIMESTAMP, "
+                + "error_message = COALESCE(error_message || ' | ', '') || "
+                + "'No progress for over 3 hours — treated as interrupted. Re-run from Integration Hub.' "
+                + "WHERE status IN ('RUNNING', 'RETRYING') "
+                + "AND start_time < CURRENT_TIMESTAMP - INTERVAL '3 hours'");
+            if (runs > 0) {
+                log.warn("[Integration] Stale-run reaper: {} orphaned integration run(s) marked FAILED.", runs);
+            }
+        } catch (Exception e) {
+            log.warn("[Integration] Stale-run reaper could not run (non-fatal): {}", e.getMessage());
         }
     }
 

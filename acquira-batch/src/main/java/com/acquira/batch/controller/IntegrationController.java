@@ -53,6 +53,15 @@ public class IntegrationController {
     /** Tier 2 gate — see the class javadoc. */
     private static final String SQL_AUTHORING = "hasRole('SUPER_ADMIN')";
 
+    /**
+     * How long a RUNNING run is still considered live. A transaction pull polls
+     * its batch job for up to 2h (IntegrationPullService.JOB_POLL_TIMEOUT_MS);
+     * a RUNNING row older than this is an orphan (pod died mid-pull) that the
+     * periodic reaper clears, and must not keep every "Run now" button disabled
+     * or block a fresh run forever. Kept a shade above 2h for margin.
+     */
+    private static final java.time.Duration LIVE_RUN_WINDOW = java.time.Duration.ofHours(3);
+
     private static boolean isSuperAdmin() {
         org.springframework.security.core.Authentication auth =
                 org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
@@ -287,7 +296,10 @@ public class IntegrationController {
         // calls POST /reports/{id}/approve.
         report.setApprovedBy(null);
         report.setApprovedAt(null);
-        report.setAmountsMinorUnits(body.get("amountsMinorUnits") != null ? (Boolean) body.get("amountsMinorUnits") : false);
+        // NULL = inherit tenant.input_format (same rule as file upload). Never
+        // default to FALSE here: the UI does not send this field, and FALSE
+        // means "no division", which loaded a CMM tenant's pull 100x too large.
+        report.setAmountsMinorUnits(body.get("amountsMinorUnits") != null ? (Boolean) body.get("amountsMinorUnits") : null);
         report.setIsActive(body.get("isActive") != null ? (Boolean) body.get("isActive") : true);
         report.setCreatedAt(LocalDateTime.now());
 
@@ -513,6 +525,13 @@ public class IntegrationController {
                 if (last.getStatus() == IntegrationRunLog.Status.FAILED) {
                     s.setLastRunError(last.getErrorMessage());
                 }
+                // Live only when the latest run is RUNNING AND started within the
+                // window — a stale orphan (older than that) must not keep the UI
+                // wedged; the reaper will mark it FAILED. Drives the UI's "a pull
+                // is already running for this bank" disabling of every Run-now.
+                s.setRunning(last.getStatus() == IntegrationRunLog.Status.RUNNING
+                        && last.getStartTime() != null
+                        && last.getStartTime().isAfter(LocalDateTime.now().minus(LIVE_RUN_WINDOW)));
                 s.setRecentRunStatuses(recent.stream()
                         .map(r -> r.getStatus() != null ? r.getStatus().name() : "UNKNOWN")
                         .toList());
@@ -683,6 +702,17 @@ public class IntegrationController {
         return scheduleRepo.findById(id)
                 .filter(s -> s.getTenantId().equals(tenantId))
                 .map(schedule -> {
+                    // Only one pull per tenant may execute at a time — the pull
+                    // service enforces it with a per-tenant lock, but that check
+                    // is async, so a second click here would report "Pull started"
+                    // and then silently defer/fail. Refuse up front with a clear
+                    // 409 so the operator knows nothing new was launched. Stale
+                    // orphaned RUNNING rows age out of the window and never wedge.
+                    if (runLogRepo.countLiveRuns(tenantId, LocalDateTime.now().minus(LIVE_RUN_WINDOW)) > 0) {
+                        return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT)
+                                .body((Object) Map.of("error",
+                                        "A pull is already running for this bank. Wait for it to finish before starting another."));
+                    }
                     LocalDate dateFrom = null;
                     LocalDate dateTo = null;
                     if (body != null) {

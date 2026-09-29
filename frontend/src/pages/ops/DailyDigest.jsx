@@ -107,6 +107,7 @@ export default function DailyDigest() {
                 backfillWindowDays: c.data.backfill_window_days ?? 3,
                 sendNotBefore: c.data.send_not_before || '',
                 subjectFigures: c.data.subject_figures === true,
+                allowToday: c.data.allow_today !== false, // default on
                 allowedDomains: c.data.allowed_domains || '',
                 restateMode: c.data.restate_mode || 'ALERT',
                 restateThresholdPct: c.data.restate_threshold_pct ?? 1,
@@ -315,6 +316,10 @@ export default function DailyDigest() {
                                 <Input type="number" min={1} max={14} value={cfg.backfillWindowDays}
                                     onChange={e => set('backfillWindowDays')(Number(e.target.value))}
                                     style={{ maxWidth: 140 }} />
+                            </FormField>
+                            <FormField label="Send for today's business date"
+                                hint="On (default): the digest runs for the current business date once its feeds have landed (the quiet period and send time still hold it). Off: only completed days before today are sent.">
+                                <Switch checked={cfg.allowToday} onChange={setToggle('allowToday')} />
                             </FormField>
                         </FormGrid>
                     </Card>

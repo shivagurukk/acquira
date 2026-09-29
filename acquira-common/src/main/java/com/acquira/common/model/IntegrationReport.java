@@ -40,13 +40,17 @@ public class IntegrationReport {
     private String paramSchema; // JSON — [{"name":"year","type":"INTEGER"},{"name":"month","type":"INTEGER"}]
 
     /**
-     * TRUE when the external query returns amounts in minor units (fils/halalas):
-     * the pull normalization step then divides txn/store-base amounts by the
-     * currency's decimal_notation_value and interchange by 10000, mirroring the
-     * CMM file path. FALSE (default) = amounts are already final decimals.
+     * Per-report override of the amount format:
+     *   TRUE  = the query returns minor units (fils/cents) — divide at ingest (CMM);
+     *   FALSE = the query already returns final decimals — no division (AMS);
+     *   NULL  = inherit tenant.input_format, exactly like a file upload.
+     * NULL is the default on purpose. It used to be FALSE, and the Integration
+     * Hub UI has no control for this field, so every report created from the
+     * UI ran in "no division" mode — a CMM tenant's DB pull then loaded
+     * volumes 100x larger than the same day's file upload (2026-09-24).
      */
     @Column(name = "amounts_minor_units")
-    private Boolean amountsMinorUnits = false;
+    private Boolean amountsMinorUnits;
 
     @Column(name = "is_active")
     private Boolean isActive = true;

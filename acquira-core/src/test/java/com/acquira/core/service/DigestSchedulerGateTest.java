@@ -110,11 +110,21 @@ class DigestSchedulerGateTest {
     }
 
     @Test
-    @DisplayName("the current business day never sends automatically, however complete it looks (I-2)")
-    void todayIsHeld() {
+    @DisplayName("with same-day off, the current business day is held however complete it looks (I-2)")
+    void todayIsHeldWhenSameDayOff() {
         s.present.addAll(List.of(MERCHANT, TRX, DCC, RENTAL));
+        // cfg has no allow_today → same-day off.
         assertEquals("TODAY", gate(LocalDate.now(s.zone)));
         assertEquals("TODAY", gate(LocalDate.now(s.zone).plusDays(1)));
+    }
+
+    @Test
+    @DisplayName("with same-day on, today's business date sends once its feeds are in; a future date never does")
+    void todaySendsWhenAllowed() {
+        s.present.addAll(List.of(MERCHANT, TRX, DCC, RENTAL));
+        cfg.put("allow_today", true);
+        assertNull(gate(LocalDate.now(s.zone)), "today is ready to send when same-day is allowed");
+        assertEquals("TODAY", gate(LocalDate.now(s.zone).plusDays(1)), "a future date is never sent");
     }
 
     @Test

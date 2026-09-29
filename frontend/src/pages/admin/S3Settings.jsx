@@ -1,21 +1,32 @@
 import { useState, useEffect } from 'react';
 import {
   Cloud, Save, Eye, EyeOff, RefreshCw, Shield, Info, ChevronDown, ChevronUp,
+  Settings2, FolderOpen,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
 import {
-  Page, Stack, Card, Button, Badge, Alert,
+  Page, Stack, Card, Button, Badge, Alert, Tabs,
   FormField, Input, Select, Switch,
 } from '../../components/ui';
+import S3FileManager from './S3FileManager';
 
 /**
  * Admin > S3 report storage.
  *
- * Reads and writes /admin/s3-settings, plus a credential check against
- * /admin/s3-settings/test. The secret access key is AES-256 encrypted server
- * side, so it is masked in the UI and only revealed on request.
+ * Two tabs over the same bucket:
+ *   Configuration — reads and writes /admin/s3-settings, plus a credential
+ *                   check against /admin/s3-settings/test. The secret access
+ *                   key is AES-256 encrypted server side, so it is masked in
+ *                   the UI and only revealed on request.
+ *   Files         — /admin/s3-files, via S3FileManager: browse, upload,
+ *                   download and delete the objects under the configured
+ *                   prefix.
+ *
+ * The two are kept apart deliberately. The config form is a save-then-verify
+ * surface, while file maintenance acts on the bucket immediately — folding an
+ * unsaved credential edit into a live delete would be a trap.
  */
 
 const AWS_REGIONS = [
@@ -54,6 +65,7 @@ export default function S3Settings() {
   const [showSecret, setShowSecret] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [tab, setTab] = useState('config');
 
   useEffect(() => {
     api.get('/admin/s3-settings')
@@ -127,6 +139,20 @@ export default function S3Settings() {
         </Badge>
       }
     >
+      <Tabs
+        tabs={[
+          { key: 'config', label: 'Configuration', icon: Settings2 },
+          { key: 'files',  label: 'File maintenance', icon: FolderOpen },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
+
+      {tab === 'files' && (
+        <S3FileManager onGoToConfig={() => setTab('config')} />
+      )}
+
+      {tab === 'config' && (
       <form onSubmit={handleSave}>
         <div
           style={{
@@ -328,6 +354,7 @@ export default function S3Settings() {
           </Card>
         </div>
       </form>
+      )}
     </Page>
   );
 }

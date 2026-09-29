@@ -47,6 +47,8 @@ public class AuthController {
     private final com.acquira.common.repository.TenantSettingRepository tenantSettingRepository;
     private final SecurityPolicyService securityPolicyService;
     private final PasswordEncoder passwordEncoder;
+    private final com.acquira.core.service.MenuVisibilityService menuVisibilityService;
+    private final com.acquira.common.security.PermissionEvaluator permissionEvaluator;
 
     // ===== Password-reset OTP config =====
     private static final int OTP_TTL_MINUTES = 10;   // OTP validity window
@@ -93,7 +95,9 @@ public class AuthController {
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantSettingRepository tenantSettingRepository,
             SecurityPolicyService securityPolicyService,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder,
+            com.acquira.core.service.MenuVisibilityService menuVisibilityService,
+            com.acquira.common.security.PermissionEvaluator permissionEvaluator) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -110,6 +114,8 @@ public class AuthController {
         this.tenantSettingRepository = tenantSettingRepository;
         this.securityPolicyService = securityPolicyService;
         this.passwordEncoder = passwordEncoder;
+        this.menuVisibilityService = menuVisibilityService;
+        this.permissionEvaluator = permissionEvaluator;
     }
 
     // ===== Session timeout (inactivity auto-logout) =====
@@ -318,23 +324,16 @@ public class AuthController {
             effectiveTenantId = allowedTenants.get(0).getTenantId();
         }
 
-        // Load menus
-        Set<com.acquira.common.model.SysMenu> menus = new HashSet<>();
+        // Load menus through the shared rule, so the sidebar the user gets at
+        // login is exactly the set of screens whose APIs will answer them —
+        // including the tenant's module entitlement and any DENY. The old
+        // group.getMenus() read sys_group_menu, which knows nothing about
+        // either, so a screen could appear here and 403 on click.
+        List<com.acquira.common.model.SysMenu> menus = List.of();
         if (user != null && effectiveTenantId != null) {
-            Optional<com.acquira.common.model.UserTenantAccess> access = userTenantAccessRepository
-                    .findByUserAndTenant_TenantId(user, effectiveTenantId);
-            if (access.isPresent() && access.get().getSysUserGroup() != null) {
-                menus = access.get().getSysUserGroup().getMenus();
-            }
-
-            // Super Admin fallback
-            if (menus.isEmpty() && "ROLE_SUPER_ADMIN".equals(user.getRole())) {
-                Optional<com.acquira.common.model.SysUserGroup> superGroup = groupRepository
-                        .findByGroupName("Super Admin");
-                if (superGroup.isPresent() && superGroup.get().getMenus() != null) {
-                    menus = superGroup.get().getMenus();
-                }
-            }
+            boolean superAdmin = "ROLE_SUPER_ADMIN".equals(user.getRole());
+            menus = menuVisibilityService.visibleMenus(
+                    username, effectiveTenantId.intValue(), superAdmin);
         }
 
         Map<String, Object> response = new HashMap<>();
@@ -344,6 +343,13 @@ public class AuthController {
         response.put("defaultTenantId", effectiveTenantId);
         response.put("roles", userDetails.getAuthorities());
         response.put("menus", menus);
+        // Action permissions alongside the sidebar: the shell needs both to
+        // render, and shipping them together removes a round trip and any
+        // window where the two disagree. Hiding a control is cosmetic — every
+        // call is still checked server-side.
+        response.put("permissions", user == null || effectiveTenantId == null ? java.util.List.of()
+                : permissionEvaluator.permissionsFor(username, effectiveTenantId.intValue(),
+                        "ROLE_SUPER_ADMIN".equals(user.getRole())));
         response.put("username", username);
         response.put("userRole", user != null ? user.getRole() : "ROLE_USER");
         // Inactivity timeout (minutes) for the frontend idle-logout timer.
@@ -719,7 +725,7 @@ public class AuthController {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        Set<com.acquira.common.model.SysMenu> menus = new HashSet<>();
+        List<com.acquira.common.model.SysMenu> menus = List.of();
 
         if (viewId != null) {
             List<com.acquira.common.model.UserCombinedView> views = tenantService.getCombinedViews(username);
@@ -745,21 +751,17 @@ public class AuthController {
             if (access.isEmpty() && !"ROLE_SUPER_ADMIN".equals(user.getRole())) {
                 return ResponseEntity.status(403).body(Map.of("error", "No access to tenant " + tenantId));
             }
-            if (access.isPresent() && access.get().getSysUserGroup() != null) {
-                menus = access.get().getSysUserGroup().getMenus();
-            }
-
-            if (menus.isEmpty() && "ROLE_SUPER_ADMIN".equals(user.getRole())) {
-                Optional<com.acquira.common.model.SysUserGroup> superGroup = groupRepository
-                        .findByGroupName("Super Admin");
-                if (superGroup.isPresent() && superGroup.get().getMenus() != null) {
-                    menus = superGroup.get().getMenus();
-                }
-            }
+            // Same shared rule as login — the sidebar must change with the
+            // tenant, because the grants and the module entitlement do.
+            menus = menuVisibilityService.visibleMenus(
+                    username, tenantId.intValue(), "ROLE_SUPER_ADMIN".equals(user.getRole()));
         }
 
         Map<String, Object> result = new HashMap<>();
         result.put("menus", menus);
+        result.put("permissions", tenantId == null ? java.util.List.of()
+                : permissionEvaluator.permissionsFor(username, tenantId.intValue(),
+                        "ROLE_SUPER_ADMIN".equals(user.getRole())));
         result.put("activeTenantId", tenantId);
         // Timeout may differ per tenant — refresh it on context switch.
         result.put("sessionTimeoutMinutes", getSessionTimeoutMinutes(tenantId));

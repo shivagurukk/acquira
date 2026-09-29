@@ -22,6 +22,19 @@ public interface IntegrationRunLogRepository extends JpaRepository<IntegrationRu
 
     List<IntegrationRunLog> findByTenantIdAndStatusOrderByStartTimeDesc(Long tenantId, IntegrationRunLog.Status status);
 
+    /**
+     * In-flight pulls for a tenant: status RUNNING and started within the live
+     * window. A RUNNING row older than {@code liveSince} is an orphan (a pod
+     * died mid-pull) — the periodic reaper clears it, and it must NOT keep the
+     * "Run now" buttons disabled or block a fresh manual run forever. Used both
+     * to gate the run-now endpoint (only one pull per tenant) and to flag a
+     * schedule as live in the list.
+     */
+    @Query("SELECT COUNT(r) FROM IntegrationRunLog r WHERE r.tenantId = :tenantId "
+           + "AND r.status = com.acquira.common.model.IntegrationRunLog.Status.RUNNING "
+           + "AND r.startTime >= :liveSince")
+    long countLiveRuns(Long tenantId, LocalDateTime liveSince);
+
     @Query("SELECT COUNT(r) FROM IntegrationRunLog r WHERE r.tenantId = :tenantId AND r.startTime >= :since")
     long countRunsSince(Long tenantId, LocalDateTime since);
 

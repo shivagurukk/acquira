@@ -64,7 +64,7 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/executive/sales-pulse")
 @RequiredArgsConstructor
-@PreAuthorize("@menuAccess.canAccess('/executive/sales')")
+@PreAuthorize("@menuAccess.canAccess('/sales/executive')")
 public class SalesPulseController {
 
     private static final String UNASSIGNED_TEAM = "Unassigned";

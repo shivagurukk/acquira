@@ -13,6 +13,7 @@ const AUTH_KEYS = [
   'userRole',
   'defaultTenantId',
   'menus',
+  'permissions',
   'allowedTenants',
   'roles',
   'sessionTimeoutMinutes',

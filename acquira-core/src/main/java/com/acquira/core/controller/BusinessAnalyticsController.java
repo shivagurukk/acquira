@@ -176,7 +176,13 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getMerchantFinancialSummary(filters, tenantId);
     }
 
-    @PreAuthorize("@menuAccess.canAccess('/business/performance')")
+    // Guarded on '/business/performance' until 2026-09-26, a screen
+    // V2026_07_10_02 deleted from the sidebar on 2026-07-10 — so this endpoint
+    // has been 403 for every non-super-admin since. Regranted to the general
+    // Business Dashboard, which is where Performance Trends was folded in.
+    // NOTE: no routed page calls this any more (TransactionPerformanceDashboard
+    // and Dashboard.enhanced are both unrouted) — candidate for deletion.
+    @PreAuthorize("@menuAccess.canAccess('/business/dashboard')")
     @PostMapping("/performance-dashboard")
     public List<Map<String, Object>> getPerformanceDashboard(
             @RequestBody VolumeRevenueFilterDTO filters,

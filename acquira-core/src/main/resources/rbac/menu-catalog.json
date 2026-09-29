@@ -1,0 +1,1333 @@
+{
+    "screens": [
+        {
+            "key": "settings",
+            "icon": "Settings",
+            "name": "Settings",
+            "path": "/settings",
+            "order": 1,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "users",
+            "icon": "Users",
+            "name": "User Management",
+            "path": "/users",
+            "order": 1,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "tenants",
+            "icon": "Building",
+            "name": "Bank Setup",
+            "path": "/tenants",
+            "order": 2,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.groups",
+            "icon": "Shield",
+            "name": "Group Management",
+            "path": "/admin/groups",
+            "order": 3,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.tenant-provisioning",
+            "icon": "DatabaseZap",
+            "name": "Tenant Provisioning",
+            "path": "/admin/tenant-provisioning",
+            "order": 3,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.smtp-settings",
+            "icon": "Settings",
+            "name": "SMTP Settings",
+            "path": "/admin/smtp-settings",
+            "order": 4,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.audit-logs",
+            "icon": "ScrollText",
+            "name": "Audit Logs",
+            "path": "/admin/audit-logs",
+            "order": 5,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.sso-settings",
+            "icon": "Shield",
+            "name": "SSO Settings",
+            "path": "/admin/sso-settings",
+            "order": 5,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.backups",
+            "icon": "Database",
+            "name": "Backup & Restore",
+            "path": "/admin/backups",
+            "order": 6,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.security-settings",
+            "icon": "ShieldCheck",
+            "name": "Security Settings",
+            "path": "/admin/security-settings",
+            "order": 6,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.data-migration",
+            "icon": "DatabaseZap",
+            "name": "Data Migration",
+            "path": "/admin/data-migration",
+            "order": 7,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.s3-settings",
+            "icon": "Cloud",
+            "name": "S3 Report Storage",
+            "path": "/admin/s3-settings",
+            "order": 7,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.api-management",
+            "icon": "Code",
+            "name": "API Management",
+            "path": "/admin/api-management",
+            "order": 8,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.maintenance",
+            "icon": "Database",
+            "name": "Database Maintenance",
+            "path": "/admin/maintenance",
+            "order": 16,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.bin-management",
+            "icon": "CreditCard",
+            "name": "BIN Management",
+            "path": "/admin/bin-management",
+            "order": 17,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.interchange-normalization",
+            "icon": "Scale",
+            "name": "Interchange Normalization",
+            "path": "/admin/interchange-normalization",
+            "order": 18,
+            "module": "administration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "ADMINISTRATION",
+            "grantView": [
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.dashboard",
+            "icon": "LayoutGrid",
+            "name": "Business Dashboard",
+            "path": "/business/dashboard",
+            "order": 0,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.volume-revenue",
+            "icon": "BarChart3",
+            "name": "Volume & Revenue",
+            "path": "/business/volume-revenue",
+            "order": 1,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.merchant-financial",
+            "icon": "DollarSign",
+            "name": "Merchant Financial",
+            "path": "/business/merchant-financial",
+            "order": 2,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.debit-prepaid",
+            "icon": "CreditCard",
+            "name": "Debit & Prepaid Metrics",
+            "path": "/business/debit-prepaid",
+            "order": 4,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.zero-transaction",
+            "icon": "AlertTriangle",
+            "name": "Zero Transaction Report",
+            "path": "/business/zero-transaction",
+            "order": 6,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.heatmap",
+            "icon": "Grid",
+            "name": "Merchant Growth Heatmap",
+            "path": "/business/heatmap",
+            "order": 7,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.daily-dashboard",
+            "icon": "Calendar",
+            "name": "Daily Merchant Dashboard",
+            "path": "/business/daily-dashboard",
+            "order": 8,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.merchant-analytics",
+            "icon": "BarChart2",
+            "name": "Merchant Analytics",
+            "path": "/business/merchant-analytics",
+            "order": 9,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.comparison",
+            "icon": "Scale",
+            "name": "Merchant Comparison",
+            "path": "/business/comparison",
+            "order": 10,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.opportunity",
+            "icon": "Target",
+            "name": "Opportunity Intelligence",
+            "path": "/business/opportunity",
+            "order": 12,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.groups",
+            "icon": "FolderKanban",
+            "name": "Group Reports",
+            "path": "/business/groups",
+            "order": 13,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "explorer",
+            "icon": "Compass",
+            "name": "Data Explorer",
+            "path": "/explorer",
+            "order": 14,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "ai-assistant",
+            "icon": "BrainCircuit",
+            "name": "AI Assistant",
+            "path": "/ai-assistant",
+            "order": 15,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.retention",
+            "icon": "HeartHandshake",
+            "name": "Retention Report",
+            "path": "/business/retention",
+            "order": 15,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.forecasting",
+            "icon": "Gauge",
+            "name": "Forecasting",
+            "path": "/business/forecasting",
+            "order": 16,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "finance.summary",
+            "icon": "BookOpen",
+            "name": "Finance Summary",
+            "path": "/finance/summary",
+            "order": 17,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.budget-targets",
+            "icon": "Target",
+            "name": "Budget Targets",
+            "path": "/business/budget-targets",
+            "order": 18,
+            "module": "business",
+            "actions": [
+                "EDIT",
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.destination-dashboard",
+            "icon": "Globe",
+            "name": "Destination Dashboard",
+            "path": "/business/destination-dashboard",
+            "order": 18,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.card-type-dashboard",
+            "icon": "CreditCard",
+            "name": "Card Type Dashboard",
+            "path": "/business/card-type-dashboard",
+            "order": 19,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.pricing-simulator",
+            "icon": "SlidersHorizontal",
+            "name": "Pricing Simulator",
+            "path": "/business/pricing-simulator",
+            "order": 19,
+            "module": "business",
+            "actions": [
+                "EDIT",
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.local-debit-bank-dashboard",
+            "icon": "Landmark",
+            "name": "Local Debit Banks",
+            "path": "/business/local-debit-bank-dashboard",
+            "order": 20,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.rentals",
+            "icon": "Receipt",
+            "name": "Rentals",
+            "path": "/business/rentals",
+            "order": 21,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.industry-analytics",
+            "icon": "Factory",
+            "name": "Industry Analytics",
+            "path": "/business/industry-analytics",
+            "order": 22,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.revenue-mix",
+            "icon": "PieChart",
+            "name": "Revenue Mix",
+            "path": "/business/revenue-mix",
+            "order": 23,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.volume-drop",
+            "icon": "TrendingDown",
+            "name": "Volume Drop",
+            "path": "/business/volume-drop",
+            "order": 24,
+            "module": "business",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "BUSINESS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.integration",
+            "icon": "Cable",
+            "name": "Integration Hub",
+            "path": "/admin/integration",
+            "order": 1,
+            "module": "data_integration",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "DATA INTEGRATION",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "dashboard",
+            "icon": "LayoutDashboard",
+            "name": "Executive Dashboard",
+            "path": "/dashboard",
+            "order": 1,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Finance User",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.ceo-volume-revenue",
+            "icon": "TrendingUp",
+            "name": "Volume & Revenue",
+            "path": "/business/ceo-volume-revenue",
+            "order": 2,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.loss-making",
+            "icon": "TrendingDown",
+            "name": "Loss-Making Merchants",
+            "path": "/business/loss-making",
+            "order": 3,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.attrition",
+            "icon": "TrendingDown",
+            "name": "Attrition Report",
+            "path": "/business/attrition",
+            "order": 4,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.top-performers",
+            "icon": "Trophy",
+            "name": "Top Performers",
+            "path": "/business/top-performers",
+            "order": 5,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "sales.executive",
+            "icon": "LayoutDashboard",
+            "name": "Sales Executive",
+            "path": "/sales/executive",
+            "order": 6,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "executive.daily-merchant",
+            "icon": "CalendarClock",
+            "name": "Daily Merchant Performance",
+            "path": "/executive/daily-merchant",
+            "order": 7,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "executive.net-spread",
+            "icon": "Layers",
+            "name": "Net Spread",
+            "path": "/executive/net-spread",
+            "order": 8,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "executive.product-summary",
+            "icon": "PackageOpen",
+            "name": "Product Summary",
+            "path": "/executive/product-summary",
+            "order": 9,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "finance.dashboard",
+            "icon": "PieChart",
+            "name": "Finance Dashboard",
+            "path": "/finance/dashboard",
+            "order": 1,
+            "module": "finance",
+            "actions": [
+                "VIEW"
+            ],
+            "category": "FINANCE",
+            "grantView": [
+                "Bank Admin",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "finance.lists",
+            "icon": "ClipboardList",
+            "name": "Finance Lists",
+            "path": "/finance/lists",
+            "order": 3,
+            "module": "finance",
+            "actions": [
+                "VIEW"
+            ],
+            "category": "FINANCE",
+            "grantView": [
+                "Bank Admin",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "interchange.outgoing",
+            "icon": "ArrowUpFromLine",
+            "name": "Outgoing",
+            "path": "/interchange/outgoing",
+            "order": 1,
+            "module": "interchange",
+            "actions": [
+                "VIEW"
+            ],
+            "category": "INTERCHANGE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "interchange.incoming",
+            "icon": "ArrowDownToLine",
+            "name": "Incoming",
+            "path": "/interchange/incoming",
+            "order": 2,
+            "module": "interchange",
+            "actions": [
+                "VIEW"
+            ],
+            "category": "INTERCHANGE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "interchange.dimp",
+            "icon": "ShieldCheck",
+            "name": "DIMP Dashboard",
+            "path": "/interchange/dimp",
+            "order": 3,
+            "module": "interchange",
+            "actions": [
+                "VIEW"
+            ],
+            "category": "INTERCHANGE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "merchants",
+            "icon": "Store",
+            "name": "Merchant Universe",
+            "path": "/merchants",
+            "order": 1,
+            "module": "merchant_mgt",
+            "actions": [
+                "EDIT",
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "MERCHANT MGT",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "transactions",
+            "icon": "List",
+            "name": "Transactions",
+            "path": "/transactions",
+            "order": 2,
+            "module": "merchant_mgt",
+            "actions": [
+                "EDIT",
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "MERCHANT MGT",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "merchant-summary",
+            "icon": "Table",
+            "name": "Merchant Summary",
+            "path": "/merchant-summary",
+            "order": 3,
+            "module": "merchant_mgt",
+            "actions": [
+                "EDIT",
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "MERCHANT MGT",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "merchant.insight-hub",
+            "icon": "PieChart",
+            "name": "Merchant Insight Hub",
+            "path": "/merchant/insight-hub",
+            "order": 4,
+            "module": "merchant_mgt",
+            "actions": [
+                "EDIT",
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "MERCHANT MGT",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "trends.hub",
+            "icon": "Activity",
+            "name": "Transaction Trends",
+            "path": "/trends/hub",
+            "order": 5,
+            "module": "merchant_mgt",
+            "actions": [
+                "EDIT",
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "MERCHANT MGT",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "upload",
+            "icon": "Upload",
+            "name": "Upload Files",
+            "path": "/upload",
+            "order": 1,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "ops.server-file",
+            "icon": "HardDrive",
+            "name": "Server File Processor",
+            "path": "/ops/server-file",
+            "order": 2,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "ops.batch-logs",
+            "icon": "Activity",
+            "name": "Batch Logs",
+            "path": "/ops/batch-logs",
+            "order": 3,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.email-campaigns",
+            "icon": "MailOpen",
+            "name": "Email Campaigns",
+            "path": "/admin/email-campaigns",
+            "order": 4,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.emails",
+            "icon": "Mail",
+            "name": "Email Manager",
+            "path": "/business/emails",
+            "order": 4,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "admin.alerts",
+            "icon": "BellRing",
+            "name": "Alerts & Notifications",
+            "path": "/admin/alerts",
+            "order": 5,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "ops.ingest-trust",
+            "icon": "ShieldCheck",
+            "name": "Ingest Trust",
+            "path": "/ops/ingest-trust",
+            "order": 5,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Ops User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "ops.scheme-billing-reference",
+            "icon": "BookOpen",
+            "name": "Scheme Billing Reference",
+            "path": "/ops/scheme-billing-reference",
+            "order": 6,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "ops.daily-digest",
+            "icon": "Mail",
+            "name": "Daily Digest",
+            "path": "/ops/daily-digest",
+            "order": 7,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "business.report-manager",
+            "icon": "FileText",
+            "name": "Report Manager",
+            "path": "/business/report-manager",
+            "order": 12,
+            "module": "operations",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "OPERATIONS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "sales.team-management",
+            "icon": "Users",
+            "name": "Sales Team Management",
+            "path": "/sales/team-management",
+            "order": 1,
+            "module": "sales",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "SALES",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "sales.country-management",
+            "icon": "Globe",
+            "name": "Country Leads",
+            "path": "/sales/country-management",
+            "order": 2,
+            "module": "sales",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "SALES",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "sales.leaderboard",
+            "icon": "Trophy",
+            "name": "Sales Leaderboard",
+            "path": "/sales/leaderboard",
+            "order": 2,
+            "module": "sales",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "SALES",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "sales.agents",
+            "icon": "Contact",
+            "name": "Agent Directory",
+            "path": "/sales/agents",
+            "order": 3,
+            "module": "sales",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "SALES",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "sales.hierarchy",
+            "icon": "Network",
+            "name": "Sales Hierarchy",
+            "path": "/sales/hierarchy",
+            "order": 5,
+            "module": "sales",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "SALES",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        }
+    ],
+    "version": 1,
+    "generated": "2026-09-26"
+}

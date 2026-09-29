@@ -29,7 +29,7 @@ public class SalesCountryLeadController {
     }
 
     // Also read by the executive sales and hierarchy screens, so any of the three grants passes.
-    @PreAuthorize("@menuAccess.canAccess('/sales/country-management') or @menuAccess.canAccess('/executive/sales') or @menuAccess.canAccess('/sales/hierarchy')")
+    @PreAuthorize("@menuAccess.canAccess('/sales/country-management') or @menuAccess.canAccess('/sales/executive') or @menuAccess.canAccess('/sales/hierarchy')")
     @GetMapping("/country-leads")
     public ResponseEntity<List<SalesCountryLead>> getCountryLeads() {
         return ResponseEntity.ok(salesCountryLeadService.getCountryLeads(getTenantId()));

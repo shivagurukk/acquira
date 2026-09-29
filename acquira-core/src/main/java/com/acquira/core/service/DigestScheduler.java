@@ -114,20 +114,25 @@ public class DigestScheduler {
      * data that just LANDED, and pre-ledger history must not email on deploy.
      * The recency window also caps how far back a re-ingest can email.
      *
-     * Only days strictly before the TENANT-LOCAL today are candidates. The
-     * current day is by definition incomplete — an intraday file would have
-     * produced a part-day digest after the quiet period, and because a day
-     * sends once, the later files were silently absorbed. An admin can still
-     * send today by hand from the readiness panel.
+     * Candidates run up to and INCLUDING the tenant-local today when the tenant
+     * allows same-day sends (allow_today, the default per the 2026-09-25
+     * directive) — the digest is for today's business date, and the feed gate,
+     * quiet period and send_not_before still hold it until the day's data has
+     * settled. A tenant with allow_today = FALSE keeps the conservative
+     * "completed days only" behaviour (strictly before today). A future date is
+     * never a candidate either way.
      */
     private void discover() {
         List<Map<String, Object>> tenants = jdbc.queryForList(
-                "SELECT tenant_id, backfill_window_days FROM digest_config WHERE enabled = TRUE");
+                "SELECT tenant_id, backfill_window_days, allow_today FROM digest_config WHERE enabled = TRUE");
         for (Map<String, Object> t : tenants) {
             long tenantId = ((Number) t.get("tenant_id")).longValue();
             int window = t.get("backfill_window_days") == null ? 3
                     : ((Number) t.get("backfill_window_days")).intValue();
+            boolean allowToday = truthy(t.get("allow_today"));
             LocalDate today = LocalDate.now(tenantZone(tenantId));
+            // Upper bound is exclusive: today+1 includes today, today excludes it.
+            LocalDate upperExclusive = allowToday ? today.plusDays(1) : today;
             jdbc.update(
                 "INSERT INTO digest_dispatch (tenant_id, business_date, status) "
                 + "SELECT c.tenant_id, c.txn_date, 'PENDING' "
@@ -135,7 +140,7 @@ public class DigestScheduler {
                 + "WHERE c.tenant_id = ? AND COALESCE(c.rows_fact, 0) > 0 "
                 + "AND c.txn_date >= ? AND c.txn_date < ? "
                 + "ON CONFLICT (tenant_id, business_date) DO NOTHING",
-                tenantId, today.minusDays(window), today);
+                tenantId, today.minusDays(window), upperExclusive);
         }
     }
 
@@ -154,7 +159,7 @@ public class DigestScheduler {
         List<Map<String, Object>> pending = jdbc.queryForList(
             "SELECT p.id, p.tenant_id, p.business_date, p.attempts, "
             + "g.recipients, g.quiet_minutes, g.require_merchant, g.require_trx, g.require_dcc, "
-            + "g.require_rental, g.send_not_before, g.subject_figures "
+            + "g.require_rental, g.send_not_before, g.subject_figures, g.allow_today "
             + "FROM digest_dispatch p "
             + "JOIN digest_config g ON g.tenant_id = p.tenant_id "
             + "WHERE p.status = 'PENDING' AND g.enabled = TRUE "
@@ -191,8 +196,13 @@ public class DigestScheduler {
      *         missing feeds, a running ingest, the quiet period, the send time.
      */
     String gate(long tenantId, LocalDate date, Map<String, Object> cfg, DigestFeedCoverage cov) {
-        // The business day is not over in the bank's own zone: nothing to send.
-        if (!date.isBefore(LocalDate.now(tenantZone(tenantId)))) return "TODAY";
+        // A future business date is never sent. Today's date is sent only when
+        // the tenant allows same-day (allow_today) — otherwise it waits for the
+        // day to complete. The feed gate below still guards a same-day send from
+        // going out on part-day data.
+        LocalDate today = LocalDate.now(tenantZone(tenantId));
+        if (date.isAfter(today)) return "TODAY";
+        if (date.isEqual(today) && !truthy(cfg.get("allow_today"))) return "TODAY";
 
         String missing = cov.missingRequired();
         if (!missing.isEmpty()) return missing;

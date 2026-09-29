@@ -97,7 +97,7 @@ public class DigestController {
         Map<String, Object> cfg = jdbc.queryForMap(
                 "SELECT tenant_id, enabled, recipients, quiet_minutes, require_merchant, "
                 + "require_trx, require_dcc, require_rental, backfill_window_days, send_not_before, "
-                + "subject_figures, allowed_domains, restate_mode, restate_threshold_pct, "
+                + "subject_figures, allowed_domains, restate_mode, restate_threshold_pct, allow_today, "
                 + "updated_by, updated_at "
                 + "FROM digest_config WHERE tenant_id = ?", tid);
         // TIME → "HH:mm" so the frontend's <input type="time"> takes it as-is.
@@ -173,7 +173,7 @@ public class DigestController {
             "UPDATE digest_config SET enabled = ?, recipients = ?, quiet_minutes = ?, "
             + "require_merchant = ?, require_trx = TRUE, require_dcc = ?, require_rental = ?, "
             + "backfill_window_days = ?, send_not_before = ?, subject_figures = ?, allowed_domains = ?, "
-            + "restate_mode = ?, restate_threshold_pct = ?, "
+            + "restate_mode = ?, restate_threshold_pct = ?, allow_today = ?, "
             + "updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?",
             enabled, String.join(",", parsed), quiet,
             boolOf(body.get("requireMerchant"), false),
@@ -182,6 +182,7 @@ public class DigestController {
             window, notBefore,
             boolOf(body.get("subjectFigures"), false), allowedDomains,
             restateMode, threshold,
+            boolOf(body.get("allowToday"), true),
             username(), tid);
 
         audit("DIGEST_CONFIG_CHANGED", String.format(

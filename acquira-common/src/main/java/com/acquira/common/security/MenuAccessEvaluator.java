@@ -1,124 +1,57 @@
 package com.acquira.common.security;
 
-import com.acquira.common.config.TenantContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 /**
- * Server-side enforcement of the DB-driven menu grants.
+ * Legacy path-based screen check, kept so the ~88 existing
+ * {@code @PreAuthorize("@menuAccess.canAccess('/some/path')")} annotations keep
+ * working unchanged. Every call now resolves through {@link PermissionEvaluator},
+ * which is the single authorisation rule.
  *
- * <p>Screen access in Acquira is granted by <em>group</em>, not by Spring role:
- * migrations insert a {@code sys_menu} row and then grant it to named groups via
- * {@code sys_group_menu} (see V2026_07_05_04__loss_making_menu.sql). The sidebar
- * honours that (GET /api/users/me/menus), but until this class the grants were
- * <strong>UI-only</strong> — the REST endpoints behind those screens sat under
- * {@code anyRequest().authenticated()} and could be called directly by any
- * authenticated user of the tenant.
+ * <p>What changed underneath:
+ * <ul>
+ *   <li>grants are read per tenant ({@code tenant_group_perm}), not from the
+ *       tenant-blind {@code sys_group_menu}</li>
+ *   <li>a screen whose module is disabled for the tenant is denied even if the
+ *       group was granted it</li>
+ *   <li>a DENY beats an ALLOW, so a second group can never widen access</li>
+ *   <li>the four-table {@code COUNT(*)} per request became a cached set lookup</li>
+ * </ul>
  *
- * <p>A role annotation cannot express these grants. The {@code role} table seeds
- * only ROLE_ADMIN / ROLE_USER / ROLE_SUPER_ADMIN, while the groups are
- * 'Super Admin', 'Bank Admin', 'Business User', 'Finance User', … — the two
- * axes are orthogonal, so {@code hasAnyRole('SUPER_ADMIN','BANK_ADMIN')} would
- * lock out every legitimate Bank Admin user. This evaluator checks the actual
- * grant instead, keeping the SQL migration as the single source of truth.
- *
- * <p>Usage — reference the bean by name from {@code @PreAuthorize}:
+ * <p><b>Do not use for new code.</b> A path is a routing detail that gets
+ * renamed; {@code menu_key} is an identity. New endpoints declare what they
+ * actually need:
  * <pre>
- *   &#64;PreAuthorize("@menuAccess.canAccess('/business/loss-making')")
+ *   &#64;PreAuthorize("@perm.can('sales.agents', 'EDIT')")
  * </pre>
- *
- * <p>ROLE_SUPER_ADMIN always passes. The startup safety net in MenuController
- * grants every menu to the 'Super Admin' group anyway, but a super-admin placed
- * in some other group must not be locked out of the platform by this check.
+ * This class is deleted once the last path-based annotation is converted.
  */
 @Component("menuAccess")
 public class MenuAccessEvaluator {
 
-    private static final Logger log = LoggerFactory.getLogger(MenuAccessEvaluator.class);
+    private final PermissionEvaluator perm;
 
-    /** Grant lookup for (username, active tenant, menu path). */
-    private static final String GRANT_SQL =
-        "SELECT COUNT(*) FROM sys_group_menu gm " +
-        "JOIN sys_menu m             ON m.menu_id  = gm.menu_id " +
-        "JOIN user_tenant_access uta ON uta.group_id = gm.group_id " +
-        "JOIN users u                ON u.user_id  = uta.user_id " +
-        "WHERE u.username = ? AND uta.tenant_id = ? AND m.path = ?";
-
-    private final JdbcTemplate jdbc;
-
-    public MenuAccessEvaluator(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    public MenuAccessEvaluator(PermissionEvaluator perm) {
+        this.perm = perm;
     }
 
     /**
      * @param menuPath the {@code sys_menu.path} of the screen this endpoint backs
-     * @return true if the caller's group in the ACTIVE tenant has been granted
-     *         that menu, or the caller is a super-admin
+     * @return true if the caller's group in the ACTIVE tenant may view that
+     *         screen, or the caller is a super-admin
      */
+    @Deprecated
     public boolean canAccess(String menuPath) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || menuPath == null) return false;
-
-        for (GrantedAuthority a : auth.getAuthorities()) {
-            if ("ROLE_SUPER_ADMIN".equals(a.getAuthority())) return true;
-        }
-
-        // Tenant scoping comes from the filter-validated TenantContext, never from
-        // the attacker-controlled X-Tenant-Id header — same rule the controllers
-        // follow. No tenant resolved means no grant can be evaluated.
-        Long tenantId = TenantContext.getCurrentTenant();
-        if (tenantId == null) return false;
-
-        try {
-            Integer granted = jdbc.queryForObject(GRANT_SQL, Integer.class,
-                    auth.getName(), tenantId, menuPath);
-            return granted != null && granted > 0;
-        } catch (Exception e) {
-            // Fail closed: an unreadable grant table must not become open access.
-            log.warn("[MenuAccess] grant lookup failed for user={} tenant={} path={}: {}",
-                    auth.getName(), tenantId, menuPath, e.getMessage());
-            return false;
-        }
+        return perm.canAccessPath(menuPath);
     }
 
-    /** Grant lookup for (username, active tenant) against a whole menu category. */
-    private static final String CATEGORY_GRANT_SQL =
-        "SELECT COUNT(*) FROM sys_group_menu gm " +
-        "JOIN sys_menu m             ON m.menu_id  = gm.menu_id " +
-        "JOIN user_tenant_access uta ON uta.group_id = gm.group_id " +
-        "JOIN users u                ON u.user_id  = uta.user_id " +
-        "WHERE u.username = ? AND uta.tenant_id = ? AND m.category = ?";
-
     /**
-     * Category-level grant — true if the caller's group in the ACTIVE tenant
-     * has been granted ANY menu in {@code category} (or the caller is a
-     * super-admin). Used by cross-cutting endpoints that back a strip shown on
-     * every screen in a category rather than one specific screen, e.g. the
-     * shared MID/SID summary on the EXECUTIVE pages.
+     * Category-level grant — true if the caller may view ANY screen in
+     * {@code category}. Used by endpoints backing a strip shown across a whole
+     * category rather than one screen.
      */
+    @Deprecated
     public boolean canAccessCategory(String category) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || category == null) return false;
-
-        for (GrantedAuthority a : auth.getAuthorities()) {
-            if ("ROLE_SUPER_ADMIN".equals(a.getAuthority())) return true;
-        }
-        Long tenantId = TenantContext.getCurrentTenant();
-        if (tenantId == null) return false;
-
-        try {
-            Integer granted = jdbc.queryForObject(CATEGORY_GRANT_SQL, Integer.class,
-                    auth.getName(), tenantId, category);
-            return granted != null && granted > 0;
-        } catch (Exception e) {
-            log.warn("[MenuAccess] category grant lookup failed for user={} tenant={} category={}: {}",
-                    auth.getName(), tenantId, category, e.getMessage());
-            return false;
-        }
+        return perm.canCategory(category);
     }
 }

@@ -1130,6 +1130,16 @@ const SchedulesTab = () => {
   };
   useEffect(() => { load(); }, [tenantVersion]);
 
+  // Only one pull per tenant runs at a time (the backend enforces it). While
+  // any schedule is live, disable every "Run now" and poll so a finished run
+  // stops showing RUNNING without a manual refresh.
+  const anyRunning = schedules.some((s) => s.running);
+  useEffect(() => {
+    if (!anyRunning) return undefined;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [anyRunning]);
+
   // Debounced cron preview while the editor is open.
   useEffect(() => {
     if (!modal) return undefined;
@@ -1192,7 +1202,17 @@ const SchedulesTab = () => {
       showToast('Pull started. Track progress in run history.', 'success');
       setRunNowModal(null);
       load();
-    } catch (err) { showToast('Failed: ' + (err.response?.data?.error || err.message), 'error'); }
+    } catch (err) {
+      // 409 = a pull is already running for this tenant. Surface the backend's
+      // message and refresh so the running badge + disabled buttons appear.
+      if (err.response?.status === 409) {
+        showToast(err.response?.data?.error || 'A pull is already running for this bank.', 'error');
+        setRunNowModal(null);
+        load();
+      } else {
+        showToast('Failed: ' + (err.response?.data?.error || err.message), 'error');
+      }
+    }
     finally { setTriggering(false); }
   };
 
@@ -1345,9 +1365,15 @@ const SchedulesTab = () => {
             size="sm"
             variant="subtle"
             icon={Zap}
+            disabled={anyRunning}
+            title={anyRunning
+              ? (s.running
+                  ? 'This pull is running — track it in run history'
+                  : 'Another pull is running for this bank; only one runs at a time')
+              : undefined}
             onClick={() => { setRunNowDates({ dateFrom: '', dateTo: '' }); setRunNowModal(s); }}
           >
-            Run now
+            {s.running ? 'Running…' : 'Run now'}
           </Button>
           <Button
             size="sm"
