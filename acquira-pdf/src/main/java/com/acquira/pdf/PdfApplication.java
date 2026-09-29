@@ -2,7 +2,7 @@ package com.acquira.pdf;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
@@ -21,10 +21,12 @@ public class PdfApplication {
     }
 
     /**
-     * Only activates scanning when running standalone (CoreApplication not present).
+     * Only activates scanning when running standalone (CoreApplication not on the
+     * classpath). A classpath condition, not @ConditionalOnMissingBean: Spring 6.2+
+     * rejects bean conditions on a class that carries @ComponentScan.
      */
     @Configuration
-    @ConditionalOnMissingBean(name = "coreApplication")
+    @ConditionalOnMissingClass("com.acquira.core.CoreApplication")
     @ComponentScan(basePackages = {"com.acquira.common", "com.acquira.pdf"})
     @EntityScan(basePackages = "com.acquira.common.model")
     @EnableJpaRepositories(basePackages = "com.acquira.common.repository")
