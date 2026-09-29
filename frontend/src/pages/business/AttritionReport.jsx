@@ -432,7 +432,7 @@ const AttritionReport = () => {
             }
         });
         if (filters.merchantName && filters.merchantName.trim()) {
-            out.push({ id: 'merchantName', label: `Name: "${filters.merchantName.trim()}"`, clear: () => apply({ merchantName: '' }) });
+            out.push({ id: 'merchantName', label: `Search: "${filters.merchantName.trim()}"`, clear: () => apply({ merchantName: '' }) });
         }
         if (filters.openDateStart || filters.openDateEnd) {
             out.push({
@@ -852,7 +852,7 @@ const AttritionReport = () => {
                     <MidSidSummary from={filters.startDate || undefined} to={filters.endDate || undefined} channel={channel} compact />
                 </Box>
             </Box>
-            <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
+            <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} searchIds />
             <DataBoundsBanner
                 latest={latest}
                 boundsLoaded={boundsLoaded}

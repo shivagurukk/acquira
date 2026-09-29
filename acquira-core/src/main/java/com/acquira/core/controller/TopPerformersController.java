@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
+import com.acquira.common.repository.VolumeRevenueRepository;
 import com.acquira.common.service.ChannelSql;
 import com.acquira.common.service.NetSpreadSql;
 import jakarta.persistence.EntityManager;
@@ -436,7 +437,7 @@ public class TopPerformersController {
         if (notEmpty(f.getPartnerList())) sql.append("  AND m.referral_partner IN (:partners) ");
         if (notEmpty(f.getRmList())) sql.append("  AND m.sales_email IN (:rms) ");
         if (notEmpty(f.getTeamLeaderList())) sql.append("  AND m.sales_user_id IN (:teamLeaders) ");
-        if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) sql.append("  AND m.name ILIKE :merchName ");
+        if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) sql.append("  AND ").append(VolumeRevenueRepository.MERCHANT_SEARCH_SQL);
         if (notEmpty(f.getMidList())) sql.append("  AND m.mid IN (:mids) ");
         // Open Date drawer filter — was accepted and silently ignored here, the
         // same class of bug already fixed for Industry below.
@@ -462,7 +463,7 @@ public class TopPerformersController {
         if (notEmpty(f.getPartnerList())) q.setParameter("partners", f.getPartnerList());
         if (notEmpty(f.getRmList())) q.setParameter("rms", f.getRmList());
         if (notEmpty(f.getTeamLeaderList())) q.setParameter("teamLeaders", f.getTeamLeaderList());
-        if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) q.setParameter("merchName", "%" + f.getMerchantName() + "%");
+        if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) q.setParameter("merchName", VolumeRevenueRepository.merchantSearchLike(f.getMerchantName()));
         if (notEmpty(f.getMidList())) q.setParameter("mids", f.getMidList());
         if (f.getOpenDateStart() != null) q.setParameter("openStart", f.getOpenDateStart());
         if (f.getOpenDateEnd() != null) q.setParameter("openEnd", f.getOpenDateEnd());
@@ -537,7 +538,7 @@ public class TopPerformersController {
             if (notEmpty(f.getRmList())) sql.append("    AND m.sales_email IN (:rms) ");
             if (notEmpty(f.getTeamLeaderList())) sql.append("    AND m.sales_user_id IN (:teamLeaders) ");
             if (notEmpty(f.getMidList())) sql.append("    AND m.mid IN (:mids) ");
-            if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) sql.append("    AND m.name ILIKE :merchName ");
+            if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) sql.append("    AND ").append(VolumeRevenueRepository.MERCHANT_SEARCH_SQL);
             sql.append(") ");
         }
         sql.append("GROUP BY s.mcc HAVING COALESCE(SUM(s.total_volume), 0) > 0 ");
@@ -559,7 +560,7 @@ public class TopPerformersController {
             if (notEmpty(f.getRmList())) q.setParameter("rms", f.getRmList());
             if (notEmpty(f.getTeamLeaderList())) q.setParameter("teamLeaders", f.getTeamLeaderList());
             if (notEmpty(f.getMidList())) q.setParameter("mids", f.getMidList());
-            if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) q.setParameter("merchName", "%" + f.getMerchantName() + "%");
+            if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) q.setParameter("merchName", VolumeRevenueRepository.merchantSearchLike(f.getMerchantName()));
         }
 
         @SuppressWarnings("unchecked")

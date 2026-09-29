@@ -67,7 +67,9 @@ const DarkAutocomplete = ({ label, options, value, onChange, placeholder, freeSo
 // merchantOnly: for pages whose backing table has no store/scheme/channel/mcc
 // dims (e.g. the Local Debit Bank Dashboard) — hides SID, MCC and the whole
 // Transaction Tech section so users can't set filters the backend ignores.
-const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDestination = false, hideCardType = false, merchantOnly = false }) => {
+// searchIds: the page's backend matches Merchant Search partially against
+// name, MID and SID (executive reports); elsewhere it is name-only.
+const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDestination = false, hideCardType = false, merchantOnly = false, searchIds = false }) => {
     const [dateType, setDateType] = useState('TRANSACTION');
     const [options, setOptions] = useState(DEFAULT_OPTIONS);
     // MCC code -> sector/category label (from ref_mcc_category via filter-options).
@@ -175,7 +177,7 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                 {/* Merchant Search */}
                 <Box mb={4}>
                     <Typography variant="overline" color="text.secondary" fontWeight="700" display="block" mb={1} letterSpacing={1}>Merchant Search</Typography>
-                    <DarkTextField placeholder="Search by Merchant Name..."
+                    <DarkTextField placeholder={searchIds ? 'Search by name, MID or SID...' : 'Search by Merchant Name...'}
                         value={filters.merchantName || ''}
                         onChange={e => update('merchantName', e.target.value)}
                         InputProps={{ startAdornment: <InputAdornment position="start"><Search size={18} color="#94A3B8" /></InputAdornment> }}

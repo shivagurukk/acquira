@@ -64,7 +64,7 @@ public class NetSpreadRepository {
     /**
      * Shared WHERE over sum_daily_merchant s JOIN dim_merchant m. Exactly one
      * of dateList / [rangeStart, rangeEnd] is set (the controller guarantees
-     * it). search matches merchant name or MID; sidList narrows to merchants
+     * it). search matches merchant name, MID or SID; sidList narrows to merchants
      * owning those stores (Net Spread is merchant-grain, so a SID filter
      * selects the whole merchant).
      */
@@ -87,8 +87,14 @@ public class NetSpreadRepository {
             w.sql.append(") ");
         }
         if (search != null && !search.isBlank()) {
-            w.sql.append("AND (m.name ILIKE ? OR m.mid ILIKE ?) ");
-            String like = "%" + search.trim() + "%";
+            // Partial match on name, MID or any of the merchant's SIDs (merchant
+            // grain, so a SID hit selects the whole merchant — same rule as
+            // sidList below). LIKE metacharacters are escaped so "50%" is literal.
+            w.sql.append("AND (m.name ILIKE ? ESCAPE '\\' OR m.mid ILIKE ? ESCAPE '\\' "
+                    + "OR EXISTS (SELECT 1 FROM dim_store sq WHERE sq.tenant_id = s.tenant_id "
+                    + "AND sq.merchant_id = s.merchant_id AND sq.sid ILIKE ? ESCAPE '\\')) ");
+            String like = "%" + search.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+            w.params.add(like);
             w.params.add(like);
             w.params.add(like);
         }

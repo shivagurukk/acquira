@@ -47,6 +47,9 @@ public class MerchantMasterJobConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private CacheEvictionJobListener cacheEvictionJobListener;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.batch.service.MerchantDedupService merchantDedupService;
+
     public MerchantMasterJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate) {
         this.jobRepository = jobRepository;
@@ -1085,6 +1088,20 @@ public class MerchantMasterJobConfig {
             } catch (Exception e) {
                 // Reconciliation is best-effort - it must never fail a merchant upload.
                 log.warn("Back-fill of auto-created placeholders failed (non-fatal): {}", e.getMessage());
+            }
+
+            // ── 3c. MID-KEYED MERGE ─────────────────────────────────────────────
+            // 3b only reconciles a placeholder whose SID the master also lists; a
+            // placeholder for an SID the master omits kept its own merchant_id and
+            // duplicated the MID. Fold every remaining AUTO_ row into the master
+            // row with the same mid, and rebuild the summaries for its dates.
+            try {
+                java.util.Map<String, Object> merged = merchantDedupService.merge(tenantId);
+                if (!Integer.valueOf(0).equals(merged.get("placeholdersMerged"))) {
+                    log.info("MID-keyed merge for tenant {}: {}", tId, merged);
+                }
+            } catch (Exception e) {
+                log.warn("MID-keyed placeholder merge failed (non-fatal, run /api/admin/merchant-dedup): {}", e.getMessage());
             }
 
             // ── 4/5/6. Contacts, Risk Profile, Bank Accounts (parallel) ──────────────

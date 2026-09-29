@@ -780,7 +780,7 @@ public class BusinessController {
                 // lossOnly rolls up to MID grain, so filtering on s.sid (which
                 // runs in WHERE, before GROUP BY) would evaluate a merchant's net
                 // position over only the matching store's rows -- contradicting
-                // the merchant-level rollup. Drop the SID predicate in that case.
+                // the merchant-level rollup. A SID search matches through EXISTS instead.
                 // Ancillary revenue (DCC acquirer share + rental) pre-aggregated to
                 // the ROW grain and LEFT JOINed once per group, read with MAX() so
                 // the per-day terminal rows never multiply it. Net Spread = net
@@ -895,7 +895,11 @@ public class BusinessController {
                                 (hasExcl ? "AND m.mid NOT IN (:exMids) " : "") +
                                 (hasSearch
                                                 ? (lossOnly
-                                                                ? "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\') "
+                                                                // MID grain: a SID hit selects the whole merchant via
+                                                                // EXISTS, so the rollup still sums all its stores.
+                                                                ? "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\' " +
+                                                                  "OR EXISTS (SELECT 1 FROM dim_store sq WHERE sq.tenant_id = m.tenant_id " +
+                                                                  "AND sq.merchant_id = m.merchant_id AND sq.sid ILIKE :q ESCAPE '\\')) "
                                                                 : "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\' " +
                                                                   "OR s.sid ILIKE :q ESCAPE '\\') ")
                                                 : "") +

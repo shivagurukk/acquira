@@ -852,6 +852,10 @@ const DailyMerchantDashboard = () => {
     const [monthDates, setMonthDates] = useState([]);
     const [selectedDates, setSelectedDates] = useState([]);
     const [filters, setFilters] = useState(EMPTY_FILTERS);
+    /* Free-text search over SID / MID / merchant name (partial, server-side).
+       searchDraft is the input; search commits 350ms after the last keystroke. */
+    const [search, setSearch] = useState('');
+    const [searchDraft, setSearchDraft] = useState('');
     const [options, setOptions] = useState({});
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(50);
@@ -923,7 +927,8 @@ const DailyMerchantDashboard = () => {
         try {
             const res = await api.post('/business/executive-daily-merchant', filters, {
                 signal,
-                params: { ...dateParams, page, size: pageSize, sort, dir, channel },
+                params: { ...dateParams, page, size: pageSize, sort, dir, channel,
+                    ...(search ? { search } : {}) },
             });
             setData(res.data);
             setLastRefresh(new Date());
@@ -933,7 +938,16 @@ const DailyMerchantDashboard = () => {
         } finally {
             setLoading(false);
         }
-    }, [filters, dateParams, page, pageSize, sort, dir, channel]);
+    }, [filters, dateParams, page, pageSize, sort, dir, channel, search]);
+
+    useEffect(() => {
+        const t = setTimeout(() => {
+            const next = searchDraft.trim();
+            if (next === search) return;
+            setSearch(next); setPage(0); setDetailRow(null);
+        }, 350);
+        return () => clearTimeout(t);
+    }, [searchDraft, search]);
 
     useEffect(() => {
         if (!bootstrapped) return;
@@ -959,12 +973,13 @@ const DailyMerchantDashboard = () => {
         let cancelled = false;
         setDetailMix(null);
         api.post('/business/executive-daily-merchant/breakdown', filters, {
-            params: { ...dateParams, merchantId: detailRow.merchantId, channel },
+            params: { ...dateParams, merchantId: detailRow.merchantId, channel,
+                ...(search ? { search } : {}) },
         })
             .then(res => { if (!cancelled) setDetailMix(res.data?.mix || null); })
             .catch(() => { if (!cancelled) setDetailMix(null); });
         return () => { cancelled = true; };
-    }, [detailRow, filters, dateParams, channel]);
+    }, [detailRow, filters, dateParams, channel, search]);
 
     const toggleDate = (iso) => {
         setSelectedDates(l => l.includes(iso) ? l.filter(d => d !== iso) : [...l, iso].sort());
@@ -1042,7 +1057,7 @@ const DailyMerchantDashboard = () => {
     };
 
     const setFilter = (key, values) => { setFilters(f => ({ ...f, [key]: values })); setPage(0); };
-    const clearFilters = () => { setFilters(EMPTY_FILTERS()); setPage(0); };
+    const clearFilters = () => { setFilters(EMPTY_FILTERS()); setSearch(''); setSearchDraft(''); setPage(0); };
 
     const onSort = (key) => {
         if (sort === key) setDir(d => (d === 'desc' ? 'asc' : 'desc'));
@@ -1061,7 +1076,8 @@ const DailyMerchantDashboard = () => {
         setExporting(true);
         try {
             const res = await api.post('/business/executive-daily-merchant', filters, {
-                params: { ...dateParams, sort, dir, export: true, channel },
+                params: { ...dateParams, sort, dir, export: true, channel,
+                    ...(search ? { search } : {}) },
             });
             const rows = res.data?.content || [];
             const totals = res.data?.totals;
@@ -1231,7 +1247,7 @@ const DailyMerchantDashboard = () => {
     /* One key per SELECTION (dates + filters). Anything that re-animates —
        ribbon wipe, bar growth, sparkline draw — is keyed on this, so a sort or
        page turn never replays motion on figures that did not change. */
-    const animKey = `${dateParams.dates || dateParams.month || ''}|${channel}|${JSON.stringify(filters)}`;
+    const animKey = `${dateParams.dates || dateParams.month || ''}|${channel}|${search}|${JSON.stringify(filters)}`;
 
     /* Per-metric daily series across the month's loaded days, for the tile
        sparklines. Cost of sale is the three pay-away fees summed per day. */
@@ -1401,6 +1417,14 @@ const DailyMerchantDashboard = () => {
                    button — so the grow factor has to live here, or the cells stop
                    at their basis and leave dead ground across the rest of the row. */
                 .edm-fwrap { position: relative; display: flex; flex: 1 1 170px; min-width: 0; }
+                /* Search cell: same footprint and label as a filter cell. */
+                .edm-search { display: flex; flex-direction: column; gap: 5px; flex: 1.4 1 220px;
+                    min-width: 0; padding: 10px 16px; cursor: text;
+                    border-right: 1px solid rgba(255,255,255,0.08); }
+                .edm-search input { flex: 1; min-width: 0; background: transparent; border: 0;
+                    outline: none; font-size: 13px; color: #EEF3FC; padding: 0; }
+                .edm-search input::placeholder { color: rgba(238,243,252,0.5); }
+                .edm-search:focus-within { background: rgba(255,255,255,0.06); }
                 .edm-fbtn { position: relative; display: flex; flex-direction: column;
                     align-items: stretch; gap: 5px; width: 100%; min-width: 0;
                     padding: 10px 16px; text-align: left; cursor: pointer;
@@ -1901,6 +1925,7 @@ const DailyMerchantDashboard = () => {
                                 onClick={() => navigate('/executive/net-spread?' + new URLSearchParams({
                                     ...(month ? { month } : {}),
                                     ...(selectedDates.length ? { dates: selectedDates.join(',') } : {}),
+                                    ...(search ? { q: search } : {}),
                                 }).toString())}
                                 title="Open the Net Spread page (net margin + DCC + rental) for the same month and days"
                                 style={{ background: 'rgba(241,245,249,0.10)', border: '1px solid rgba(241,245,249,0.22)',
@@ -1939,6 +1964,23 @@ const DailyMerchantDashboard = () => {
                 </div>
 
                 <div className="edm-cmdbar">
+                    <label className="edm-search">
+                        <span className="edm-fbtn-label">Search</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                            <Search size={13} style={{ color: 'rgba(238,243,252,0.6)', flexShrink: 0 }} />
+                            <input value={searchDraft}
+                                onChange={e => setSearchDraft(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Escape') setSearchDraft(''); }}
+                                placeholder="SID / MID / name"
+                                aria-label="Search by SID, MID or merchant name" />
+                            {searchDraft && (
+                                <button onClick={() => setSearchDraft('')} aria-label="Clear search"
+                                    style={{ background: 'none', border: 0, cursor: 'pointer', display: 'flex', padding: 0 }}>
+                                    <X size={12} color="rgba(238,243,252,0.7)" />
+                                </button>
+                            )}
+                        </span>
+                    </label>
                     {FILTER_DEFS.map(({ key, label, optKey }) => (
                         <FilterSelect key={key} label={label}
                             options={options?.[optKey] || []}

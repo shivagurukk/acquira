@@ -957,7 +957,19 @@ const NetSpreadDashboard = () => {
         );
     };
 
-    const applySearch = () => { setSearch(searchDraft); setPage(0); setDetailRow(null); };
+    /* Search-as-you-type: the draft commits 350ms after the last keystroke
+       (same debounce as Volume & Revenue). Applying only on Enter / blur made
+       a partial name look like it matched nothing until the user pressed
+       Enter. Enter and blur still commit immediately. No-op when unchanged,
+       so blur after a debounced commit doesn't reset the page again. */
+    const applySearch = useCallback(() => {
+        if (searchDraft.trim() === search.trim()) return;
+        setSearch(searchDraft); setPage(0); setDetailRow(null);
+    }, [searchDraft, search]);
+    useEffect(() => {
+        const t = setTimeout(applySearch, 350);
+        return () => clearTimeout(t);
+    }, [applySearch]);
 
     return (
         <div className="edm-page"
@@ -1409,8 +1421,8 @@ const NetSpreadDashboard = () => {
                             onChange={e => setSearchDraft(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') applySearch(); }}
                             onBlur={applySearch}
-                            placeholder="Search merchant name or MID"
-                            aria-label="Search merchant name or MID" />
+                            placeholder="Search name / MID / SID"
+                            aria-label="Search merchant name, MID or SID" />
                         {search && (
                             <button onClick={() => { setSearchDraft(''); setSearch(''); setPage(0); }}
                                 aria-label="Clear search"

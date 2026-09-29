@@ -13,7 +13,8 @@ import java.util.Map;
 /**
  * Active MID / SID counts for the shared executive header strip.
  *
- * MID = sum_daily_full.merchant_id, SID = sum_daily_full.store_id. This is the
+ * MID = dim_merchant.mid, SID = dim_store.sid (codes, not surrogate keys),
+ * resolved from sum_daily_full.merchant_id / store_id. This is the
  * one summary that carries BOTH grains together with the channel dimension, so
  * the counts are read straight off it rather than through
  * {@link ChannelSql#merchantDay} (which collapses to merchant-day and drops
@@ -54,9 +55,17 @@ public class MidSidSummaryRepository {
     public Map<String, Object> activeCounts(Long tenantId, LocalDate from, LocalDate to, String channel) {
         String ch = ChannelSql.normalize(channel);
 
+        // Count business codes (dim_merchant.mid / dim_store.sid), not surrogate
+        // keys: dim_* are unique only on internal_id, so one MID/SID code can own
+        // several surrogate rows and COUNT(DISTINCT merchant_id) over-counts.
+        // The inner DISTINCT collapses the summary to its few (merchant, store)
+        // pairs before the dim joins. A surrogate with no dim row falls back to
+        // its key so it is still counted once rather than silently dropped.
         StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(DISTINCT merchant_id) AS mids, COUNT(DISTINCT store_id) AS sids "
-                + "FROM sum_daily_full "
+                "SELECT COUNT(DISTINCT COALESCE(m.mid, 'id:' || s.merchant_id)) AS mids, "
+                + "COUNT(DISTINCT CASE WHEN s.store_id IS NOT NULL "
+                + "THEN COALESCE(st.sid, 'id:' || s.store_id) END) AS sids "
+                + "FROM (SELECT DISTINCT merchant_id, store_id FROM sum_daily_full "
                 + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ? AND total_txns > 0");
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
@@ -66,6 +75,11 @@ public class MidSidSummaryRepository {
             // Fixed literal only — never request input — so no injection surface.
             sql.append(" AND channel_class = '").append(ch).append('\'');
         }
+        sql.append(") s "
+                + "LEFT JOIN dim_merchant m ON m.merchant_id = s.merchant_id AND m.tenant_id = ? "
+                + "LEFT JOIN dim_store st ON st.store_id = s.store_id AND st.tenant_id = ?");
+        params.add(tenantId);
+        params.add(tenantId);
 
         Map<String, Object> row = jdbcTemplate.queryForMap(sql.toString(), params.toArray());
 

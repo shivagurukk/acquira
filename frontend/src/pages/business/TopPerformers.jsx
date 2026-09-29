@@ -402,6 +402,7 @@ const TopPerformers = () => {
             />
 
             <BusinessFilters
+                searchIds
                 filters={filters}
                 onChange={setFilters}
                 onApply={() => fetchData()}

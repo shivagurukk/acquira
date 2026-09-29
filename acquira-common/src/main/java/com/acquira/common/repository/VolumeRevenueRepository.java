@@ -1676,7 +1676,7 @@ public class VolumeRevenueRepository {
             if (filter.getOpenDateStart() != null)        sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) >= :openStart ");
             if (filter.getOpenDateEnd() != null)          sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) <= :openEnd ");
             if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
-                sql.append("AND m.name ILIKE :merchName ");
+                sql.append("AND ").append(MERCHANT_SEARCH_SQL);
             if (listNonEmpty(filter.getMccList()))        sql.append("AND st.mcc IN (:mccs) ");
             if (listNonEmpty(filter.getSidList()))        sql.append("AND st.sid IN (:sids) ");
             if (listNonEmpty(filter.getChannelList()))     sql.append("AND s.channel IN (:channels) ");
@@ -1699,7 +1699,7 @@ public class VolumeRevenueRepository {
             if (filter.getOpenDateStart() != null)        q.setParameter("openStart", filter.getOpenDateStart());
             if (filter.getOpenDateEnd() != null)          q.setParameter("openEnd", filter.getOpenDateEnd());
             if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
-                q.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+                q.setParameter("merchName", merchantSearchLike(filter.getMerchantName()));
             if (listNonEmpty(filter.getMccList()))        q.setParameter("mccs", filter.getMccList());
             if (listNonEmpty(filter.getSidList()))        q.setParameter("sids", filter.getSidList());
             if (listNonEmpty(filter.getChannelList()))     q.setParameter("channels", filter.getChannelList());
@@ -1996,7 +1996,7 @@ public class VolumeRevenueRepository {
         if (filter.getOpenDateStart() != null)      sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) >= :openStart ");
         if (filter.getOpenDateEnd() != null)        sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) <= :openEnd ");
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
-            sql.append("AND m.name ILIKE :merchName ");
+            sql.append("AND ").append(MERCHANT_SEARCH_SQL);
         // Store-dimension filters
         if (listNonEmpty(filter.getMccList()))      sql.append("AND st.mcc IN (:mccs) ");
         if (listNonEmpty(filter.getSidList()))      sql.append("AND st.sid IN (:sids) ");
@@ -2045,7 +2045,7 @@ public class VolumeRevenueRepository {
         if (filter.getOpenDateStart() != null)        query.setParameter("openStart", filter.getOpenDateStart());
         if (filter.getOpenDateEnd() != null)          query.setParameter("openEnd", filter.getOpenDateEnd());
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
-            query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+            query.setParameter("merchName", merchantSearchLike(filter.getMerchantName()));
         if (listNonEmpty(filter.getMccList()))        query.setParameter("mccs", filter.getMccList());
         if (listNonEmpty(filter.getSidList()))        query.setParameter("sids", filter.getSidList());
         if (listNonEmpty(filter.getChannelList()))    query.setParameter("channels", filter.getChannelList());
@@ -2353,6 +2353,23 @@ public class VolumeRevenueRepository {
     }
 
     private static boolean listNonEmpty(List<?> l) { return l != null && !l.isEmpty(); }
+
+    /**
+     * Executive merchant search: the drawer's "Merchant Search" text matched
+     * partially against name, MID, or any SID of the merchant (EXISTS, so a
+     * merchant-grain report keeps the whole merchant). Requires dim_merchant
+     * aliased {@code m}; bind {@code :merchName} with {@link #merchantSearchLike}.
+     */
+    public static final String MERCHANT_SEARCH_SQL =
+            "(m.name ILIKE :merchName ESCAPE '\\' OR m.mid ILIKE :merchName ESCAPE '\\' "
+            + "OR EXISTS (SELECT 1 FROM dim_store sq WHERE sq.tenant_id = m.tenant_id "
+            + "AND sq.merchant_id = m.merchant_id AND sq.sid ILIKE :merchName ESCAPE '\\')) ";
+
+    /** %term% with LIKE metacharacters escaped, for {@link #MERCHANT_SEARCH_SQL}. */
+    public static String merchantSearchLike(String term) {
+        return "%" + term.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+    }
+
     private static boolean isZero(java.math.BigDecimal b) { return b == null || b.signum() == 0; }
     private static java.math.BigDecimal bd(Object o) {
         if (o == null) return java.math.BigDecimal.ZERO;

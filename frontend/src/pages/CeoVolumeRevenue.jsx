@@ -451,7 +451,7 @@ const CeoVolumeRevenue = ({
                         <Search size={14} style={{ position: 'absolute', left: 10, top: '50%',
                             transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                         <input value={search} onChange={e => setSearch(e.target.value)}
-                            placeholder={lossOnly ? 'Search MID / name' : 'Search SID / MID / name'}
+                            placeholder="Search SID / MID / name"
                             style={{
                                 padding: '8px 12px 8px 30px', fontSize: 13, width: 200,
                                 background: 'var(--bg-card)', border: '1px solid var(--border)',

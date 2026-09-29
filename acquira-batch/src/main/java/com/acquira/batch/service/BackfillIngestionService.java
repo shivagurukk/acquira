@@ -461,21 +461,27 @@ public class BackfillIngestionService {
         int merchantsAdded = jdbcTemplate.update(
                 """
                         INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date)
-                        SELECT s.tenant_id,
-                          'AUTO_SID_' || TRIM(s.sid),
-                          COALESCE(NULLIF(TRIM(MAX(s.mid)), ''), 'AUTO_MID_' || TRIM(s.sid)),
-                          COALESCE(
-                            MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> ''
-                                     AND s.merchant_name !~ '^[0-9.]+$' THEN s.merchant_name END),
-                            MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')),
-                            MAX(NULLIF(TRIM(s.store_name), '')),
-                            'Merchant ' || TRIM(s.sid)),
+                        SELECT x.tenant_id,
+                          'AUTO_SID_' || MIN(x.sid),
+                          COALESCE(x.mid, 'AUTO_MID_' || MIN(x.sid)),
+                          COALESCE(MAX(x.nm_merchant), MAX(x.nm_legal), MAX(x.nm_store), 'Merchant ' || MIN(x.sid)),
                           'ACTIVE', NOW()
-                        FROM stg_trnx_raw s
-                        WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL
-                          AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid))
-                          AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), ''))
-                        GROUP BY s.tenant_id, TRIM(s.sid)
+                        FROM (
+                          SELECT s.tenant_id, TRIM(s.sid) AS sid,
+                            MAX(NULLIF(TRIM(s.mid), '')) AS mid,
+                            MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> ''
+                                     AND s.merchant_name !~ '^[0-9.]+$' THEN s.merchant_name END) AS nm_merchant,
+                            MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')) AS nm_legal,
+                            MAX(NULLIF(TRIM(s.store_name), '')) AS nm_store
+                          FROM stg_trnx_raw s
+                          WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL
+                            AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid))
+                            AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), ''))
+                          GROUP BY s.tenant_id, TRIM(s.sid)
+                        ) x
+                        WHERE x.mid IS NULL
+                           OR NOT EXISTS (SELECT 1 FROM dim_merchant dm WHERE dm.tenant_id = x.tenant_id AND dm.mid = x.mid)
+                        GROUP BY x.tenant_id, x.mid, CASE WHEN x.mid IS NULL THEN x.sid END
                         ON CONFLICT (tenant_id, internal_id) DO NOTHING
                         """, tenantId);
 
@@ -492,9 +498,12 @@ public class BackfillIngestionService {
                                    'Store ' || TRIM(s.sid)),
                           'ACTIVE', NOW()
                         FROM stg_trnx_raw s
-                        JOIN dim_merchant m ON m.tenant_id = s.tenant_id
-                          AND (m.mid = NULLIF(TRIM(s.mid), '')
-                            OR m.internal_id = 'AUTO_SID_' || TRIM(s.sid))
+                        JOIN LATERAL (SELECT COALESCE(
+                            (SELECT m1.merchant_id FROM dim_merchant m1
+                               WHERE m1.tenant_id = s.tenant_id AND m1.mid = NULLIF(TRIM(s.mid), '') LIMIT 1),
+                            (SELECT m2.merchant_id FROM dim_merchant m2
+                               WHERE m2.tenant_id = s.tenant_id AND m2.internal_id = 'AUTO_SID_' || TRIM(s.sid) LIMIT 1)
+                          ) AS merchant_id) m ON m.merchant_id IS NOT NULL
                         WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL
                           AND NOT EXISTS (SELECT 1 FROM dim_store ds
                             WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid))

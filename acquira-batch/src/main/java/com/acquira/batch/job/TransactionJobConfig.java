@@ -392,23 +392,40 @@ public class TransactionJobConfig {
                 "LIMIT 1)", Boolean.class, tenantId);
 
             if (Boolean.TRUE.equals(hasUnmappedMerchants)) {
+                // At most ONE placeholder per MID (see MerchantDedupService for the
+                // duplicates the old one-per-SID rule minted):
+                //   inner  — one row per unmapped SID, its MID resolved across ALL
+                //            the SID's staged rows (a SID whose rows mix a blank and
+                //            a real MID resolves to the real one);
+                //   filter — a MID that already has a merchant row needs no
+                //            placeholder: the store INSERT below attaches the SID
+                //            to that row via its MID-first lookup;
+                //   outer  — SIDs sharing a new MID collapse to one placeholder
+                //            (internal_id keyed on the lowest SID); SIDs with no MID
+                //            keep one AUTO_SID_/AUTO_MID_ placeholder each.
                 merchantsAdded = jdbcTemplate.update(
                     "INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date) " +
-                    "SELECT s.tenant_id, " +
-                    "  'AUTO_SID_' || TRIM(s.sid), " +
-                    "  COALESCE(NULLIF(TRIM(MAX(s.mid)), ''), 'AUTO_MID_' || TRIM(s.sid)), " +
-                    "  COALESCE(" +
-                    "    MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
-                    "             AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + " THEN s.merchant_name END), " +
-                    "    MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')), " +
-                    "    MAX(NULLIF(TRIM(s.store_name), '')), " +
-                    "    'Merchant ' || TRIM(s.sid)), " +
+                    "SELECT x.tenant_id, " +
+                    "  'AUTO_SID_' || MIN(x.sid), " +
+                    "  COALESCE(x.mid, 'AUTO_MID_' || MIN(x.sid)), " +
+                    "  COALESCE(MAX(x.nm_merchant), MAX(x.nm_legal), MAX(x.nm_store), 'Merchant ' || MIN(x.sid)), " +
                     "  'ACTIVE', NOW() " +
-                    "FROM stg_trnx_raw s " +
-                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
-                    "  AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
-                    "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
-                    "GROUP BY s.tenant_id, TRIM(s.sid) " +
+                    "FROM (" +
+                    "  SELECT s.tenant_id, TRIM(s.sid) AS sid, " +
+                    "    MAX(NULLIF(TRIM(s.mid), '')) AS mid, " +
+                    "    MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
+                    "             AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + " THEN s.merchant_name END) AS nm_merchant, " +
+                    "    MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')) AS nm_legal, " +
+                    "    MAX(NULLIF(TRIM(s.store_name), '')) AS nm_store " +
+                    "  FROM stg_trnx_raw s " +
+                    "  WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
+                    "    AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                    "    AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
+                    "  GROUP BY s.tenant_id, TRIM(s.sid)" +
+                    ") x " +
+                    "WHERE x.mid IS NULL " +
+                    "   OR NOT EXISTS (SELECT 1 FROM dim_merchant dm WHERE dm.tenant_id = x.tenant_id AND dm.mid = x.mid) " +
+                    "GROUP BY x.tenant_id, x.mid, CASE WHEN x.mid IS NULL THEN x.sid END " +
                     "ON CONFLICT (tenant_id, internal_id) DO NOTHING",
                     tenantId);
             }
