@@ -23,7 +23,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
     private static final int REGULAR_LIMIT = 200; // per minute
-    private static final int EXTERNAL_LIMIT = 20; // per minute for /api/external/*
     private static final int MIGRATION_LIMIT = 5; // per minute for /api/admin/migration/* (destructive)
     // /api/admin/migration/progress is a read-only status poll, not a destructive
     // action, and the Data Migration screen polls it every 5s (=12/min) for the
@@ -46,8 +45,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // Skip rate limiting for static resources and health checks
-        if (path.startsWith("/actuator") || path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".ico")) {
+        // Skip rate limiting for static resources, health checks and pod-to-pod
+        // calls (token-guarded; all arrive from one caller IP by design)
+        if (path.startsWith("/actuator") || path.startsWith("/internal/")
+                || path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".ico")) {
             chain.doFilter(request, response);
             return;
         }
@@ -83,25 +84,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // NOTE: the progress check must come BEFORE the general migration prefix in
     // both methods — it is a more specific match on the same prefix.
     private int getLimit(String path) {
-        if (path.startsWith("/api/external/")) return EXTERNAL_LIMIT;
         if (path.startsWith(MIGRATION_PROGRESS_PATH)) return MIGRATION_PROGRESS_LIMIT;
         if (path.startsWith("/api/admin/migration/")) return MIGRATION_LIMIT;
         return REGULAR_LIMIT;
     }
 
     private String getBucket(String path) {
-        if (path.startsWith("/api/external/")) return "external";
         if (path.startsWith(MIGRATION_PROGRESS_PATH)) return "migration-progress";
         if (path.startsWith("/api/admin/migration/")) return "migration";
         return "api";
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isEmpty()) {
-            return xff.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return com.acquira.common.security.ClientIp.of(request);
     }
 
     /** Cleanup stale entries every 5 minutes (called by Spring scheduler) */

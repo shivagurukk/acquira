@@ -60,13 +60,7 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
             }
 
             // 3. Client IP
-            String clientIp = request.getHeader("X-Forwarded-For");
-            if (clientIp != null && !clientIp.isEmpty()) {
-                clientIp = clientIp.split(",")[0].trim();
-            } else {
-                clientIp = request.getRemoteAddr();
-            }
-            MDC.put(MDC_IP, clientIp);
+            MDC.put(MDC_IP, com.acquira.common.security.ClientIp.of(request));
 
             // Continue filter chain
             chain.doFilter(request, response);

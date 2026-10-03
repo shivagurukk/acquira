@@ -149,11 +149,7 @@ public class AuditInterceptor implements HandlerInterceptor {
     }
 
     private String clientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return com.acquira.common.security.ClientIp.of(request);
     }
 
     private static String truncate(String s, int max) {

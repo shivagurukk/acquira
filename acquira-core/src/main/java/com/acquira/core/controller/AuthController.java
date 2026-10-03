@@ -1018,11 +1018,7 @@ public class AuthController {
     }
 
     private String getClientIp(jakarta.servlet.http.HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isEmpty()) {
-            return xff.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return com.acquira.common.security.ClientIp.of(request);
     }
 }
 
