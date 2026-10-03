@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquira-frontend
+  namespace: acquira
+spec:
+  replicas: 2                # stateless; scale freely
+  selector:
+    matchLabels: { app: acquira-frontend }
+  template:
+    metadata:
+      labels: { app: acquira-frontend }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101                        # "nginx" in the nginx image
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: frontend
+          image: acquira-frontend:local
+          imagePullPolicy: IfNotPresent
+          # 8080: a non-root nginx cannot bind 80. The Service still exposes 80.
+          ports: [{ containerPort: 8080 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            # nginx /api fallback upstream (the ingress normally routes /api
+            # itself). Must resolve or nginx refuses to start.
+            - { name: API_UPSTREAM, value: "acquira-core:8081" }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "250m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquira-frontend
+  namespace: acquira
+spec:
+  selector: { app: acquira-frontend }
+  ports:
+    - { port: 80, targetPort: 8080 }

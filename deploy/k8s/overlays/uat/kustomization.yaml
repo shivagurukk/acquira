@@ -1,0 +1,100 @@
+# =============================================================================
+# UAT overlay — AWS EKS, same shape as prod at 1 replica per backend.
+#
+#   kubectl kustomize deploy/k8s/overlays/uat      # review first
+#   kubectl apply -k   deploy/k8s/overlays/uat
+#
+# Keep this as close to prod as possible: same ingress class, same storage
+# class, same secret mechanism — only sizes, hostnames and tags differ. Replace
+# every CHANGE-ME. Apply DB migrations V2026_10_03_01, _02, _03 before deploying.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - external-secret.yaml
+
+images:
+  - name: acquira-backend-slim
+    newName: 370525687312.dkr.ecr.eu-west-1.amazonaws.com/ams/acquira/backend
+    newTag: slim-uat
+  - name: acquira-backend-full
+    newName: 370525687312.dkr.ecr.eu-west-1.amazonaws.com/ams/acquira/backend
+    newTag: full-uat
+  - name: acquira-frontend
+    newName: 370525687312.dkr.ecr.eu-west-1.amazonaws.com/ams/acquira/frontend
+    newTag: uat
+
+replicas:
+  - name: acquira-frontend
+    count: 1
+
+patches:
+  # reject any pod in the namespace that is not "restricted" (see prod)
+  - target: { kind: Namespace, name: acquira }
+    patch: |-
+      - op: add
+        path: /metadata/labels/pod-security.kubernetes.io~1enforce
+        value: restricted
+
+  - target: { kind: ConfigMap, name: acquira-config }
+    patch: |-
+      - op: replace
+        path: /data/SPRING_PROFILES_ACTIVE
+        value: "prod,json-logs"
+      - op: replace
+        path: /data/SPRING_DATASOURCE_URL
+        value: "jdbc:postgresql://CHANGE-ME-uat-rds-endpoint.eu-west-1.rds.amazonaws.com:5432/acquira?reWriteBatchedInserts=true&sslmode=require"
+      - op: replace
+        path: /data/SPRING_DATASOURCE_USERNAME
+        value: "acquira"
+      - op: add
+        path: /data/CORS_ORIGINS
+        value: "https://CHANGE-ME-uat-host"
+
+  - target: { kind: PersistentVolumeClaim, name: acquira-reports-pvc }
+    patch: |-
+      - op: replace
+        path: /spec/accessModes
+        value: ["ReadWriteMany"]
+      - op: add
+        path: /spec/storageClassName
+        value: efs-sc             # CHANGE-ME: your EFS CSI StorageClass (access points owned by uid/gid 10001 — see prod)
+
+  - target: { kind: Ingress, name: acquira-ingress }
+    patch: |-
+      - op: replace
+        path: /spec/ingressClassName
+        value: alb
+      - op: replace
+        path: /spec/rules/0/host
+        value: CHANGE-ME-uat-host
+      - op: replace
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/scheme: internal
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+          alb.ingress.kubernetes.io/ssl-redirect: "443"
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-west-1:370525687312:certificate/CHANGE-ME
+          alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+          alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=1800
+          alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=3600
+          alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
+  - target: { kind: Service, name: acquira-frontend }
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /
+
+  - target: { kind: NetworkPolicy, name: "(frontend|core|batch)-from-ingress|pdf-from-ingress-and-core" }
+    patch: |-
+      - op: replace
+        path: /spec/ingress/0/from
+        value:
+          # CHANGE-ME: the ALB's SUBNET CIDR(s) — not the whole VPC. With the VPC
+          # CNI every pod has a VPC address, so a VPC-wide block would let any
+          # pod reach these services and undo the policy.
+          - ipBlock: { cidr: 10.0.0.0/24 }

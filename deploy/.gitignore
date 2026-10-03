@@ -1,4 +1,4 @@
 # never commit real secrets or local env
-k8s/01-secret.yaml
+k8s/overlays/*/secrets.env
 .env
 *.local.yaml

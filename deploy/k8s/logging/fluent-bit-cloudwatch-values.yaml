@@ -1,0 +1,36 @@
+# Helm values for eks/aws-for-fluent-bit — ship pod stdout to CloudWatch Logs.
+# STARTING POINT, not verified against a cluster: key names follow the chart's
+# documented values; check them against the chart version you install
+# (helm show values eks/aws-for-fluent-bit).
+
+serviceAccount:
+  create: true
+  annotations:
+    # CHANGE-ME: IRSA role allowed to write CloudWatch Logs
+    eks.amazonaws.com/role-arn: arn:aws:iam::370525687312:role/CHANGE-ME-fluent-bit
+
+# The app already logs JSON; Merge_Log lifts those keys (pod, cid, level,
+# tenantId, ...) to top-level fields so Logs Insights can filter on them.
+filter:
+  mergeLog: "On"
+  keepLog: "Off"
+  k8sLoggingParser: "On"
+
+cloudWatchLogs:
+  enabled: true
+  region: eu-west-1
+  # One group per environment; one stream per container.
+  logGroupName: /acquira/prod          # CHANGE-ME per environment (/acquira/uat)
+  logStreamPrefix: "pod-"
+  logRetentionDays: 90
+  autoCreateGroup: true
+
+# Only the outputs we use.
+cloudWatch:
+  enabled: false
+firehose:
+  enabled: false
+kinesis:
+  enabled: false
+elasticsearch:
+  enabled: false

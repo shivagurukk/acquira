@@ -1,0 +1,156 @@
+# =============================================================================
+# PROD overlay — AWS EKS.
+#
+#   kubectl kustomize deploy/k8s/overlays/prod      # review first
+#   kubectl apply -k   deploy/k8s/overlays/prod
+#
+# Differences from the base:
+#   images     ECR, pinned tags (slim = core + batch, full = pdf with Chromium)
+#   database   RDS (no Postgres pod)
+#   secret     from AWS Secrets Manager via External Secrets (external-secret.yaml)
+#   storage    reports PVC on EFS, ReadWriteMany — core, pdf and batch all mount it
+#   ingress    AWS ALB (HTTPS, sticky target groups) instead of ingress-nginx
+#   replicas   core 2, pdf 2, frontend 3, batch 1
+#   logs       JSON on stdout for the log collector (profile json-logs)
+#
+# EVERY value marked CHANGE-ME must be replaced before the first apply.
+#
+# BEFORE THE FIRST DEPLOY: apply DB migrations V2026_10_03_01, _02 and _03.
+# Pods stay NotReady (readiness 503) until _01 and _02 exist.
+#
+# WHY batch stays at 1: its schedulers are lock-protected (ShedLock), but
+# backfill / bulk-migration / merchant-dedup progress and the cron registry are
+# still held in the pod's memory, and an upload is processed by the pod that
+# received it. Scale it UP (cpu/memory), not out.
+# WHY core/pdf can run 2: scheduled jobs take a ShedLock row, report caches
+# sync through report_cache_version, PDF job status is in pdf_job_status. What
+# is still per-pod in core (rate-limit counters, the bulk-email progress map)
+# is covered by ALB target-group stickiness below.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - external-secret.yaml
+
+images:
+  - name: acquira-backend-slim
+    newName: 370525687312.dkr.ecr.eu-west-1.amazonaws.com/ams/acquira/backend
+    newTag: slim-CHANGE-ME        # e.g. slim-1.0.0 — never "latest" in prod
+  - name: acquira-backend-full
+    newName: 370525687312.dkr.ecr.eu-west-1.amazonaws.com/ams/acquira/backend
+    newTag: full-CHANGE-ME
+  - name: acquira-frontend
+    newName: 370525687312.dkr.ecr.eu-west-1.amazonaws.com/ams/acquira/frontend
+    newTag: CHANGE-ME
+
+replicas:
+  - name: acquira-core
+    count: 2
+  - name: acquira-pdf
+    count: 2
+  - name: acquira-frontend
+    count: 3
+  - name: acquira-batch
+    count: 1
+
+patches:
+  # ---- pod security: reject any pod in the namespace that is not "restricted"
+  - target: { kind: Namespace, name: acquira }
+    patch: |-
+      - op: add
+        path: /metadata/labels/pod-security.kubernetes.io~1enforce
+        value: restricted
+
+  # ---- environment config -------------------------------------------------
+  - target: { kind: ConfigMap, name: acquira-config }
+    patch: |-
+      - op: replace
+        path: /data/SPRING_PROFILES_ACTIVE
+        value: "prod,json-logs"
+      - op: replace
+        path: /data/SPRING_DATASOURCE_URL
+        # sslmode=require: the connection to RDS is refused unless it is TLS.
+        value: "jdbc:postgresql://CHANGE-ME-rds-endpoint.eu-west-1.rds.amazonaws.com:5432/acquira?reWriteBatchedInserts=true&sslmode=require"
+      - op: replace
+        path: /data/SPRING_DATASOURCE_USERNAME
+        value: "acquira"
+      - op: add
+        path: /data/CORS_ORIGINS
+        value: "https://nexus.afs.com.bh"
+
+  # ---- reports volume: EFS, shared by core + pdf + batch --------------------
+  - target: { kind: PersistentVolumeClaim, name: acquira-reports-pvc }
+    patch: |-
+      - op: replace
+        path: /spec/accessModes
+        value: ["ReadWriteMany"]
+      - op: add
+        path: /spec/storageClassName
+        # CHANGE-ME: your EFS CSI StorageClass. The pods run as uid/gid 10001 and
+        # fsGroup is not applied to EFS, so the class must hand out access points
+        # owned by that id (parameters uid: "10001", gid: "10001") or the pods
+        # cannot write reports.
+        value: efs-sc
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 50Gi
+
+  # ---- with >1 replica a rollout replaces pods one at a time ----------------
+  - target: { kind: Deployment, name: "acquira-(core|pdf)" }
+    patch: |-
+      - op: replace
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
+
+  # ---- ingress: ALB ---------------------------------------------------------
+  - target: { kind: Ingress, name: acquira-ingress }
+    patch: |-
+      - op: replace
+        path: /spec/ingressClassName
+        value: alb
+      - op: replace
+        path: /spec/rules/0/host
+        value: nexus.afs.com.bh
+      - op: replace
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/scheme: internet-facing          # CHANGE-ME: or "internal"
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+          alb.ingress.kubernetes.io/ssl-redirect: "443"
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-west-1:370525687312:certificate/CHANGE-ME
+          # TLS 1.2+ only (the ALB default policy still accepts TLS 1.0/1.1).
+          alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+          # CHANGE-ME: a WAFv2 web ACL (regional, eu-west-1) with the AWS managed
+          # common rules and a rate-based rule. The app's own rate limit is
+          # counted per pod, so the WAF is the limit that holds across replicas.
+          # If the ALB is made "internal" above, this line can be deleted.
+          alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:eu-west-1:370525687312:regional/webacl/CHANGE-ME
+          # Upload progress is an SSE stream held open up to 30 min.
+          alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=1800
+          # One browser keeps hitting the same pod of each service (per target
+          # group), so per-pod state such as bulk-email progress stays visible.
+          alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=3600
+          alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
+  # the frontend has no actuator — its target group health-checks "/"
+  - target: { kind: Service, name: acquira-frontend }
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /
+
+  # ---- network policy: ALB (IP mode) traffic arrives from VPC addresses ------
+  - target: { kind: NetworkPolicy, name: "(frontend|core|batch)-from-ingress|pdf-from-ingress-and-core" }
+    patch: |-
+      - op: replace
+        path: /spec/ingress/0/from
+        value:
+          # CHANGE-ME: the ALB's SUBNET CIDR(s) — not the whole VPC. With the VPC
+          # CNI every pod has a VPC address, so a VPC-wide block would let any
+          # pod reach these services and undo the policy.
+          - ipBlock: { cidr: 10.0.0.0/24 }

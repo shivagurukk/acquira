@@ -1,0 +1,18 @@
+# =============================================================================
+# Shared reports volume, mounted by the core, pdf AND batch pods (pdf writes
+# statements/reports, core attaches them to emails and serves the file
+# manager, batch scheduled runs drop output there).
+# Locally RWO is fine ONLY because kind is a single node, so all three pods
+# land on it. On AWS this must be an EFS-backed ReadWriteMany PVC, or the
+# second pod to mount it stays Pending.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: acquira-reports-pvc
+  namespace: acquira
+spec:
+  accessModes: ["ReadWriteOnce"]   # AWS/EFS -> ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,0 +1,29 @@
+# =============================================================================
+# Shared by every backend pod (core / pdf / batch). The pods differ ONLY in
+# ACQUIRA_ROLE, which each Deployment sets itself. Same jar, same config.
+# Values here are the kind/dev defaults; the uat and prod overlays patch the
+# database URL, profiles and CORS origins.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acquira-config
+  namespace: acquira
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://acquira-db:5432/postgres?reWriteBatchedInserts=true"
+  SPRING_DATASOURCE_USERNAME: "postgres"
+  APP_REPORTS_DIR: "/opt/acquira/reports"
+  # Where the core pod sends statement renders (PdfRenderClient). The pdf
+  # Service name; every backend pod listens on 8081.
+  PDF_SERVICE_URL: "http://acquira-pdf:8081"
+  # Finish in-flight requests on SIGTERM instead of dropping them; pairs with
+  # terminationGracePeriodSeconds on the Deployments.
+  SERVER_SHUTDOWN: "graceful"
+  # (= spring.lifecycle.timeout-per-shutdown-phase; relaxed binding drops the dashes)
+  SPRING_LIFECYCLE_TIMEOUTPERSHUTDOWNPHASE: "45s"
+  # Keep "never" in every shared/prod cluster and run the migration Job (08-*)
+  # to install the schema. "always" re-runs schema.sql (DDL DROPs + re-seed) on
+  # EVERY pod start/rolling deploy — only flip it to "always" for a throwaway
+  # local kind DB, then flip it back.
+  SPRING_SQL_INIT_MODE: "never"

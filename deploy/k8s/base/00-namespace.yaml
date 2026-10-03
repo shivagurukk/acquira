@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: acquira
+  labels:
+    # Pod Security Standards. The four Acquira Deployments meet "restricted"
+    # (non-root, no privilege escalation, all capabilities dropped, seccomp).
+    # Here it only warns/audits, because the dev overlay's Postgres pod runs
+    # the stock image as root; the uat and prod overlays (no Postgres pod) add
+    # "enforce", which REJECTS any pod that does not comply.
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

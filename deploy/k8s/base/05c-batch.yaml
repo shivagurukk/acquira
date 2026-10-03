@@ -1,0 +1,88 @@
+# =============================================================================
+# acquira-batch (ACQUIRA_ROLE=batch): file ingest jobs, integration DB pulls,
+# interchange scans, backups, partitions, migration tools. Serves /api/batch,
+# /api/upload, /api/interchange and the /api/admin/* paths listed in the ingress.
+#
+# replicas: 1 — its 5 schedulers (2 AM DB pull, 15-min integration pull,
+# 30-min upload cleanup, 5-min interchange scan, churn retrain) and the
+# DB-loaded cron schedules have no cross-pod lock; upload progress is streamed
+# over SSE from the pod that runs the job. Uploads are written to the pod's own
+# filesystem (data/uploads under /app) and processed there, so they need no
+# shared volume; backups go to BACKUP_DIR (default /opt/acquira/backups).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquira-batch
+  namespace: acquira
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: acquira-batch }
+  template:
+    metadata:
+      labels: { app: acquira-batch }
+    spec:
+      terminationGracePeriodSeconds: 120  # BatchConfig waits for in-flight jobs
+      automountServiceAccountToken: false   # the app never calls the Kubernetes API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001                      # "acquira" in Dockerfile.core
+        runAsGroup: 10001
+        fsGroup: 10001                        # makes the mounted volumes group-writable
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: batch
+          image: acquira-backend-slim:local
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8081 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: ACQUIRA_ROLE, value: "batch" }
+          envFrom:
+            - configMapRef: { name: acquira-config }
+            - secretRef:    { name: acquira-secrets }
+          volumeMounts:
+            - name: reports
+              mountPath: /opt/acquira/reports
+            - name: scratch
+              mountPath: /app/data        # uploads + partition temp files
+            - name: scratch
+              mountPath: /app/temp
+              subPath: temp
+          resources:
+            requests: { cpu: "500m", memory: "2Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }   # 8 partition workers + JPA batching
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8081 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              exec: { command: ["sh", "-c", "sleep 5"] }
+      volumes:
+        - name: reports
+          persistentVolumeClaim: { claimName: acquira-reports-pvc }
+        - name: scratch
+          emptyDir:
+            sizeLimit: 10Gi             # a 2 GB upload is split into partition files
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquira-batch
+  namespace: acquira
+spec:
+  selector: { app: acquira-batch }
+  ports:
+    - { port: 8081, targetPort: 8081 }

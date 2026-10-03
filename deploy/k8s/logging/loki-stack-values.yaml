@@ -1,0 +1,34 @@
+# Helm values for grafana/loki-stack (Loki + promtail + Grafana) — local kind or
+# a self-hosted cluster. STARTING POINT, not verified against a cluster: check
+# key names against the chart version you install (helm show values grafana/loki-stack).
+
+loki:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+
+grafana:
+  enabled: true
+  sidecar:
+    datasources:
+      enabled: true     # registers Loki as a datasource automatically
+
+promtail:
+  enabled: true
+  config:
+    snippets:
+      pipelineStages:
+        - cri: {}
+        # The app logs one JSON object per line. Pull out the two low-cardinality
+        # fields worth indexing; everything else stays queryable via `| json`.
+        - match:
+            selector: '{namespace="acquira"}'
+            stages:
+              - json:
+                  expressions:
+                    acquira_role: pod      # core | pdf | batch
+                    level: level
+              - labels:
+                  acquira_role:
+                  level:

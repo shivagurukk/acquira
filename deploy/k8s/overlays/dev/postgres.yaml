@@ -31,7 +31,11 @@ spec:
           image: postgres:16
           env:
             - { name: POSTGRES_USER, value: postgres }
-            - { name: POSTGRES_PASSWORD, value: postgres }
+            # Same Secret the backend pods read. Not the literal "postgres":
+            # SecurityStartupGuard refuses that password under the prod profile.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: acquira-secrets, key: SPRING_DATASOURCE_PASSWORD }
             - { name: POSTGRES_DB, value: postgres }
           ports: [{ containerPort: 5432 }]
           volumeMounts:

@@ -1,0 +1,36 @@
+# =============================================================================
+# DEV overlay — kind on a laptop.
+#   + a Postgres pod (stands in for RDS)
+#   + Secret generated from secrets.env   (copy secrets.env.example first)
+#   images: the ones you built locally and `kind load`ed
+#
+#   copy deploy\k8s\overlays\dev\secrets.env.example deploy\k8s\overlays\dev\secrets.env
+#   kubectl apply -k deploy/k8s/overlays/dev
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - postgres.yaml
+  - networkpolicy-db.yaml
+
+# acquira-secrets from a local, git-ignored env file.
+secretGenerator:
+  - name: acquira-secrets
+    namespace: acquira
+    envs:
+      - secrets.env
+generatorOptions:
+  disableNameSuffixHash: true   # the Deployments reference the plain name
+
+images:
+  - name: acquira-backend-slim
+    newName: acquira-backend-slim
+    newTag: local
+  - name: acquira-backend-full
+    newName: acquira-backend-full
+    newTag: local
+  - name: acquira-frontend
+    newName: acquira-frontend
+    newTag: local

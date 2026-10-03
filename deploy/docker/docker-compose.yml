@@ -29,6 +29,9 @@ services:
       db:
         condition: service_healthy
     environment:
+      # Single process = all modules. The k8s manifests split this into
+      # core / pdf / batch pods via ACQUIRA_ROLE; compose stays all-in-one.
+      ACQUIRA_ROLE: all
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/postgres
       SPRING_DATASOURCE_USERNAME: postgres
@@ -51,7 +54,7 @@ services:
     depends_on:
       - core
     ports:
-      - "8080:80"            # open http://localhost:8080
+      - "8080:8080"          # open http://localhost:8080 (nginx runs non-root on 8080)
 
 volumes:
   pgdata:

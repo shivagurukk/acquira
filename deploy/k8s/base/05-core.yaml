@@ -1,0 +1,85 @@
+# =============================================================================
+# acquira-core (ACQUIRA_ROLE=core): API, auth, email, AI, the core schedulers
+# (email queue, digests, alerts, webhooks, maintenance) and the event-outbox
+# relay. No Chromium, no ingest jobs — those are the pdf and batch pods.
+#
+# REPLICAS: 1 here (dev). Running more is safe for the schedulers — every
+# @Scheduled job, webhook delivery and the email queue take a ShedLock row
+# (table shedlock), so a job runs on one replica at a time. Still per-pod:
+# rate-limit counters and the bulk-email progress map, so put a sticky load
+# balancer in front when scaling out (the prod overlay runs 2 with ALB
+# stickiness and switches the strategy to RollingUpdate).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquira-core
+  namespace: acquira
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: acquira-core }
+  template:
+    metadata:
+      labels: { app: acquira-core }
+    spec:
+      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false   # the app never calls the Kubernetes API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001                      # "acquira" in Dockerfile.core
+        runAsGroup: 10001
+        fsGroup: 10001                        # makes the mounted volumes group-writable
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: core
+          image: acquira-backend-slim:local
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8081 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: ACQUIRA_ROLE, value: "core" }
+          envFrom:
+            - configMapRef: { name: acquira-config }
+            - secretRef:    { name: acquira-secrets }
+          volumeMounts:
+            - name: reports
+              mountPath: /opt/acquira/reports
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "2Gi" }
+          # Actuator probes (health,info exposed; probes enabled in application.properties).
+          # startupProbe is generous: boot runs partition maintenance, menu/RBAC
+          # seeding and the report-cache warmup, so first-ready can take a while.
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            failureThreshold: 30
+            periodSeconds: 10        # allows up to ~5 min to boot
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8081 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            periodSeconds: 20
+          lifecycle:
+            # Let the Service stop routing to this pod before the JVM starts
+            # its graceful shutdown.
+            preStop:
+              exec: { command: ["sh", "-c", "sleep 5"] }
+      volumes:
+        - name: reports
+          persistentVolumeClaim: { claimName: acquira-reports-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquira-core
+  namespace: acquira
+spec:
+  selector: { app: acquira-core }
+  ports:
+    - { port: 8081, targetPort: 8081 }

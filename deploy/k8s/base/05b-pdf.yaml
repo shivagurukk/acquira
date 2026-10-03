@@ -1,0 +1,80 @@
+# =============================================================================
+# acquira-pdf (ACQUIRA_ROLE=pdf): Chromium statement/report rendering.
+# Serves /api/business/insights (ingress) and
+# /internal/pdf/render for the core pod (cluster-internal, token-guarded).
+#
+# REPLICAS: 1 here (dev); the prod overlay runs 2. Batch-job and S3-upload
+# status is written to pdf_job_status every few seconds (PdfJobStore), so a
+# status poll or cancel that lands on another replica still works, and a job
+# whose pod died is reported as INTERRUPTED. Needs the full image (Chromium).
+# Sized for Chromium + JVM; raise memory before pdf.pool.size.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquira-pdf
+  namespace: acquira
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: acquira-pdf }
+  template:
+    metadata:
+      labels: { app: acquira-pdf }
+    spec:
+      terminationGracePeriodSeconds: 90   # an in-flight render can take a minute
+      automountServiceAccountToken: false   # the app never calls the Kubernetes API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001                      # "acquira" in Dockerfile.core
+        runAsGroup: 10001
+        fsGroup: 10001                        # makes the mounted volumes group-writable
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: pdf
+          image: acquira-backend-full:local
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8081 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: ACQUIRA_ROLE, value: "pdf" }
+            - { name: PDF_POOL_SIZE, value: "2" }
+          envFrom:
+            - configMapRef: { name: acquira-config }
+            - secretRef:    { name: acquira-secrets }
+          volumeMounts:
+            - name: reports
+              mountPath: /opt/acquira/reports
+          resources:
+            requests: { cpu: "500m", memory: "2Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8081 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              exec: { command: ["sh", "-c", "sleep 5"] }
+      volumes:
+        - name: reports
+          persistentVolumeClaim: { claimName: acquira-reports-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquira-pdf
+  namespace: acquira
+spec:
+  selector: { app: acquira-pdf }
+  ports:
+    - { port: 8081, targetPort: 8081 }

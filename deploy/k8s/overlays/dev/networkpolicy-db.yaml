@@ -1,0 +1,38 @@
+# Dev only (the Postgres pod exists only in this overlay): the database accepts
+# connections from the three backend pods and nothing else in the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-from-backends
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-db }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: [acquira-core, acquira-pdf, acquira-batch] }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# The other direction: base/08-networkpolicy.yaml allows the backends out to
+# 5432 by address (RDS on AWS). Here the database is a pod, so say so by label
+# too — not every CNI matches pod addresses against an ipBlock.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backends-to-db
+  namespace: acquira
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [acquira-core, acquira-pdf, acquira-batch] }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: acquira-db }
+      ports:
+        - { protocol: TCP, port: 5432 }

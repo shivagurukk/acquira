@@ -16,11 +16,23 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      labels: { app: acquira-db-migrate }
     spec:
       restartPolicy: Never
+      automountServiceAccountToken: false
+      # Required by the namespace's "restricted" pod security level (uat/prod).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999                  # "postgres" in the postgres image
+        runAsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: migrate
           image: postgres:16          # has psql
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
           env:
             - name: PGPASSWORD
               valueFrom:
@@ -35,4 +47,24 @@ spec:
               # psql -h acquira-db -U postgres -d postgres -f /sql/V3__feature_revenue_leakage.sql
               # psql -h acquira-db -U postgres -d postgres -f /sql/V2026_05_07_01__performance_indexes.sql
               # psql -h acquira-db -U postgres -d postgres -f /sql/V2026_06_27_01__revenue_leakage_flags_reconcile.sql
+              # ...
+              # REQUIRED for the pod split (pods stay NotReady without _01 and _02):
+              # psql -h acquira-db -U postgres -d postgres -f /sql/V2026_10_03_01__cross_pod_cache_version_and_event_outbox.sql
+              # psql -h acquira-db -U postgres -d postgres -f /sql/V2026_10_03_02__shedlock.sql
+              # psql -h acquira-db -U postgres -d postgres -f /sql/V2026_10_03_03__pdf_job_status.sql
               echo "TODO: wire in the SQL files, then remove this echo."
+---
+# The namespace denies outbound traffic by default (base/08-networkpolicy.yaml);
+# this lets the Job reach the database and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-migrate-egress
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-db-migrate }
+  policyTypes: ["Egress"]
+  egress:
+    - ports:
+        - { protocol: TCP, port: 5432 }

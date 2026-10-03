@@ -1,0 +1,206 @@
+# =============================================================================
+# NetworkPolicies — who may open a connection to which pod.
+#
+#   everything in the namespace   denied by default
+#   frontend, core, batch         only from the ingress controller
+#   pdf                           from the ingress controller AND from core
+#
+# WHY: pdf exposes /internal/pdf/render for core (pod-to-pod, shared-token
+# guarded). The ingress has no route for /internal, so from outside the cluster
+# it is unreachable; this policy closes the inside too — batch, frontend or any
+# other pod in the cluster cannot connect to the pdf pod at all. A
+# NetworkPolicy works on IP + port, not URL paths, so "only core may call
+# /internal" is enforced as "only core (and the ingress, which cannot route
+# /internal) may reach pdf:8081", with the token as the second check.
+#
+# REQUIREMENTS / PER-ENVIRONMENT NOTES
+#  - The cluster's CNI must enforce NetworkPolicy. kind (kindnet) does from
+#    v0.24; on EKS enable it on the VPC CNI (enableNetworkPolicy=true) or run
+#    Calico/Cilium. Without an enforcing CNI these objects are accepted and
+#    silently ignored.
+#  - "From the ingress controller" is namespace ingress-nginx here. With an AWS
+#    ALB in IP mode the traffic comes from the load balancer's own addresses,
+#    not from a pod, so the uat/prod overlays replace that source with the
+#    ALB subnets' CIDR (see overlays/prod/kustomization.yaml).
+#  - kubelet probes come from the node and are not blocked by these policies.
+#
+# EGRESS (bottom of this file) — what each pod may connect OUT to:
+#   every pod    cluster DNS only
+#   core/pdf/batch   + Postgres 5432 and HTTPS 443 (S3, Secrets Manager, AI, SSO,
+#                      webhooks)
+#   core             + the pdf pod, + SMTP 25/465/587
+#   batch            + Oracle 1521 / SQL Server 1433 (integration pulls)
+#   frontend         nothing else (the ingress routes /api, not nginx)
+# Nothing may reach the cloud metadata endpoint (169.254.169.254), which hands
+# out the node's AWS credentials, and no pod may open plain port 80. A
+# NetworkPolicy cannot match hostnames, so "443 to anywhere" is as tight as it
+# gets here; an integration on another port (a database on a custom port, an
+# SMTP relay on 2525, plain-http webhooks) needs its port added below.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: acquira
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-from-ingress
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-frontend }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports:
+        - { protocol: TCP, port: 8080 }   # the pod port (Service port 80 -> 8080)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-from-ingress
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-core }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: batch-from-ingress
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-batch }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pdf-from-ingress-and-core
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-pdf }
+  policyTypes: ["Ingress"]
+  ingress:
+    # user-facing /api/business/insights
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports:
+        - { protocol: TCP, port: 8081 }
+    # /internal/pdf/render — the core pod only
+    - from:
+        - podSelector:
+            matchLabels: { app: acquira-core }
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+# ----------------------------- EGRESS ----------------------------------------
+# Selecting every pod with policyTypes Egress makes outbound traffic
+# deny-by-default; the one rule lets them resolve names. (With NodeLocal
+# DNSCache the resolver is 169.254.20.10 on the node — add an ipBlock for it.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress-allow-dns
+  namespace: acquira
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# core, pdf and batch: the database and HTTPS, anywhere except the metadata
+# endpoint. Tighten 5432 to the RDS subnets' CIDR in an overlay if you like.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-egress
+  namespace: acquira
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [acquira-core, acquira-pdf, acquira-batch] }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["169.254.169.254/32"]
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 443 }
+---
+# core only: statement renders on the pdf pod, and outbound mail.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-egress
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-core }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: acquira-pdf }
+      ports:
+        - { protocol: TCP, port: 8081 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["169.254.169.254/32"]
+      ports:
+        - { protocol: TCP, port: 25 }
+        - { protocol: TCP, port: 465 }
+        - { protocol: TCP, port: 587 }
+---
+# batch only: integration pulls from Oracle / SQL Server sources (Postgres
+# sources are covered by 5432 above).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: batch-egress
+  namespace: acquira
+spec:
+  podSelector:
+    matchLabels: { app: acquira-batch }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["169.254.169.254/32"]
+      ports:
+        - { protocol: TCP, port: 1521 }
+        - { protocol: TCP, port: 1433 }

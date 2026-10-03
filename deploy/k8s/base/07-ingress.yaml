@@ -1,0 +1,74 @@
+# =============================================================================
+# Ingress via ingress-nginx (local stand-in for AWS ALB).
+# On AWS: swap ingressClassName to "alb" and replace the nginx annotations with
+# alb.ingress.kubernetes.io/* ones. The routing rules below stay the same.
+#
+# ROUTING = POD SPLIT. The browser talks to ONE host; these rules send each
+# API prefix to the pod whose module serves it (longest prefix wins):
+#   pdf    /api/business/insights
+#   batch  /api/batch, /api/upload, /api/interchange, /api/admin/{backups,
+#          integration, interchange-normalization, merchant-dedup, migration,
+#          partitions}
+#   core   everything else under /api
+# Adding a controller to the batch or pdf module = adding its prefix here.
+# /internal/** is deliberately NOT routed (pod-to-pod only).
+#
+# Browse to http://acquira.localtest.me  (resolves to 127.0.0.1 automatically),
+# or add "127.0.0.1 acquira.local" to C:\Windows\System32\drivers\etc\hosts.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: acquira-ingress
+  namespace: acquira
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "2g"      # 2GB uploads
+    # Upload progress is an SSE stream held open up to 30 min (BatchProgressController).
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: acquira.localtest.me
+      http:
+        paths:
+          # ---- pdf pod ----
+          - path: /api/business/insights
+            pathType: Prefix
+            backend: { service: { name: acquira-pdf, port: { number: 8081 } } }
+          # ---- batch pod ----
+          - path: /api/batch
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/upload
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/interchange
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/admin/backups
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/admin/integration
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/admin/interchange-normalization
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/admin/merchant-dedup
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/admin/migration
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          - path: /api/admin/partitions
+            pathType: Prefix
+            backend: { service: { name: acquira-batch, port: { number: 8081 } } }
+          # ---- core pod: every other API ----
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: acquira-core, port: { number: 8081 } } }
+          # ---- SPA ----
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: acquira-frontend, port: { number: 80 } } }

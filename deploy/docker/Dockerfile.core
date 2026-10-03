@@ -1,22 +1,59 @@
 # =============================================================================
-# acquira-core image  (bundles batch + ai + pdf into one process)
-# PDF engine = Playwright 1.40.0 (driver-bundle) which manages its OWN Chromium.
+# Acquira backend image. ONE jar runs every pod; ACQUIRA_ROLE picks the modules
+# (all | core | pdf | batch — see PodRoleFilter). Two image flavours:
+#
+#   --target slim   JRE only.            Use for ACQUIRA_ROLE=core and =batch.
+#   (default) full  JRE + Chromium.      Use for ACQUIRA_ROLE=pdf and =all.
+#
+#   docker build -t acquira-core:slim --target slim -f deploy/docker/Dockerfile.core .
+#   docker build -t acquira-core:full               -f deploy/docker/Dockerfile.core .
+#
+# PDF engine = Playwright 1.63.0 (driver-bundle) which manages its OWN Chromium.
 # We copy the EXACT version-matched browser from Microsoft's official Playwright
-# image (pinned to v1.40.0). No distro 'chromium' package is installed here.
+# image (pinned to v1.63.0). No distro 'chromium' package is installed here.
+# The base must be glibc (Debian/Ubuntu): Playwright's bundled Node driver and
+# Chromium do not run on Alpine/musl.
 # =============================================================================
 
-# ---- Stage 1: build the fat JAR ----
+# ---- build the fat JAR ----
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /src
 COPY . .
 RUN mvn -B -pl acquira-core -am -DskipTests package
 
-# ---- Stage 2: matching Chromium (already at /ms-playwright in this image) ----
-FROM mcr.microsoft.com/playwright/java:v1.40.0-jammy AS browsers
+# ---- matching Chromium (already at /ms-playwright in this image) ----
+FROM mcr.microsoft.com/playwright/java:v1.63.0-jammy AS browsers
 
-# ---- Stage 3: runtime ----
-FROM eclipse-temurin:21-jre
+# ---- slim: core + batch pods ----
+FROM eclipse-temurin:21-jre AS slim
 ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# The app never runs as root. The uid is numeric and fixed so the k8s manifests
+# can say runAsUser/fsGroup 10001 (runAsNonRoot cannot verify a user NAME).
+RUN groupadd --gid 10001 acquira \
+    && useradd --uid 10001 --gid 10001 --home-dir /app --no-create-home --shell /usr/sbin/nologin acquira
+
+WORKDIR /app
+COPY --from=build --chown=10001:10001 /src/acquira-core/target/acquira-core-*.jar /app/app.jar
+
+# Every directory the app writes to, owned by the app user: reports, backups and
+# logs under /opt/acquira, uploads + partition temp files under /app.
+RUN mkdir -p /opt/acquira/reports /opt/acquira/uploads /opt/acquira/logs /opt/acquira/data \
+             /opt/acquira/backups /app/data /app/temp \
+    && chown -R 10001:10001 /app /opt/acquira
+ENV APP_REPORTS_DIR=/opt/acquira/reports
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=65 -XX:+UseContainerSupport"
+
+USER 10001:10001
+EXPOSE 8081
+# exec: java must be PID 1 so it receives SIGTERM and shuts down gracefully.
+ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/app.jar"]
+
+# ---- full: pdf pod / single-container installs (default target) ----
+FROM slim AS full
+USER root
 
 # Chromium's runtime system libraries + fonts.
 # NOTE: libasound2 was renamed to libasound2t64 in newer Ubuntu; we request
@@ -25,7 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
       libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
       libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 \
-      fonts-liberation fonts-noto-color-emoji ca-certificates curl \
+      fonts-liberation fonts-noto-color-emoji \
     && (apt-get install -y --no-install-recommends libasound2t64 \
         || apt-get install -y --no-install-recommends libasound2) \
     && rm -rf /var/lib/apt/lists/*
@@ -35,12 +72,4 @@ COPY --from=browsers /ms-playwright /ms-playwright
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
-WORKDIR /app
-COPY --from=build /src/acquira-core/target/acquira-core-*.jar /app/app.jar
-
-RUN mkdir -p /opt/acquira/reports /opt/acquira/uploads
-ENV APP_REPORTS_DIR=/opt/acquira/reports
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=65 -XX:+UseContainerSupport"
-
-EXPOSE 8081
-ENTRYPOINT ["sh","-c","java $JAVA_OPTS -jar /app/app.jar"]
+USER 10001:10001

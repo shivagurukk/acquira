@@ -1,0 +1,37 @@
+# =============================================================================
+# Acquira — Kustomize BASE. Everything that is the same in every environment:
+# the four Deployments + Services, shared ConfigMap, reports PVC, ingress
+# routing and NetworkPolicies. Not usable on its own — apply an overlay:
+#
+#   kubectl apply -k deploy/k8s/overlays/dev     # kind on a laptop
+#   kubectl apply -k deploy/k8s/overlays/uat     # EKS UAT
+#   kubectl apply -k deploy/k8s/overlays/prod    # EKS production
+#
+# Preview what an overlay produces without touching a cluster:
+#   kubectl kustomize deploy/k8s/overlays/prod
+#
+# What overlays change: image registry/tag, DB URL, hostname + ingress class,
+# storage class of the reports PVC, replica counts, where the Secret comes from.
+# What they must NOT change: the ingress path -> service routing (it mirrors
+# the code; IngressRoutingContractTest checks this file's 07-ingress.yaml).
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: acquira
+
+resources:
+  - 00-namespace.yaml
+  - 02-configmap.yaml
+  - 04-reports-pvc.yaml
+  - 05-core.yaml
+  - 05b-pdf.yaml
+  - 05c-batch.yaml
+  - 06-frontend.yaml
+  - 07-ingress.yaml
+  - 08-networkpolicy.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: acquira
+    includeSelectors: false
