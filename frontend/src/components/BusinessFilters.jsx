@@ -3,7 +3,7 @@ import {
     Drawer, Box, Typography, IconButton, Stack, TextField, Button,
     InputAdornment, Autocomplete, ToggleButton, ToggleButtonGroup,
     Chip, Divider
-} from '@mui/material';
+} from './ui/system';
 import {
     Filter, X, RefreshCw, Search, Briefcase, Layers, Monitor, Hash
 } from 'lucide-react';

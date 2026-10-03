@@ -53,7 +53,6 @@ class RbacGuardCoverageTest {
         // Legitimately unauthenticated or self-scoped:
         "AuthController",          // login, refresh, forgot-password — pre-auth by definition
         "SsoController",           // SAML/OIDC callback — pre-auth by definition
-        "OpenApiController",       // spec document
         "MenuController",          // returns only the caller's own menus/permissions
 
         // Known gaps — every read is tenant-scoped through TenantContext, but
@@ -62,7 +61,6 @@ class RbacGuardCoverageTest {
         "AuditLogController",
         "BatchJobController",
         "BatchProgressController",
-        "ExternalDataApiController",
         "MerchantController",
         "S3SettingsController",
         "StoreController"

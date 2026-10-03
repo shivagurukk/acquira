@@ -22,8 +22,10 @@ import java.util.List;
 public class GeoAnalyticsController {
 
     private final SumDailyTerminalRepository sumDailyTerminalRepository;
+    private final com.acquira.common.service.ReportCache reportCache;
 
     @GetMapping("/heatmap")
+    @com.acquira.common.config.ReportResponse
     public ResponseEntity<List<GeoMetricDTO>> getHeatmapData(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 
@@ -40,7 +42,12 @@ public class GeoAnalyticsController {
         }
 
         log.info("Fetching Geo Heatmap data for tenant {} date {}", tenantId, date);
-        List<GeoMetricDTO> geoMetrics = sumDailyTerminalRepository.findGeoMetricsByDateForTenant(date, tenantId);
+        // Keyed on the RESOLVED date (defaults to yesterday from the clock).
+        final LocalDate day = date;
+        List<GeoMetricDTO> geoMetrics = reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "geoHeatmap:" + tenantId + ":" + day,
+                () -> sumDailyTerminalRepository.findGeoMetricsByDateForTenant(day, tenantId));
 
         return ResponseEntity.ok(geoMetrics);
     }

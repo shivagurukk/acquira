@@ -1,3 +1,5 @@
+import { clearResponseCache } from '../api/responseCache';
+
 /**
  * Auth storage helper.
  *
@@ -22,6 +24,8 @@ const AUTH_KEYS = [
 
 export function clearAuthStorage() {
   AUTH_KEYS.forEach((key) => localStorage.removeItem(key));
+  // Cached report payloads belong to the session that fetched them.
+  clearResponseCache();
 }
 
 export default clearAuthStorage;

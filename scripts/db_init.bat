@@ -136,7 +136,7 @@ echo   DATABASE INIT COMPLETE
 echo  ============================================================
 echo.
 echo   Login : http://localhost:5173
-echo   User  : admin  /  Password: admin123
+echo   User  : admin  /  Password: password  (must be changed at first login)
 echo   S3    : http://localhost:5173/admin/s3-settings
 echo.
 pause

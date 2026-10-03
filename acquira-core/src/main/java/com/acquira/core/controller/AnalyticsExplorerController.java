@@ -1,12 +1,15 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.config.TenantContext;
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
+import com.acquira.common.service.ReportCache;
 import com.acquira.common.model.ExplorerMasterItem;
 import com.acquira.common.model.ExplorerAlert;
 import com.acquira.common.repository.ExplorerMasterItemRepository;
 import com.acquira.common.repository.ExplorerAlertRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -63,6 +66,7 @@ public class AnalyticsExplorerController {
     private final ObjectMapper objectMapper;
     /** Stamps the tenant's currency onto every money-bearing response. */
     private final CurrencyMeta currencyMeta;
+    private final ReportCache reportCache;
 
     /** Which table/alias a dimension lives on — drives which dim joins we add. */
     private enum Src { TXN, MERCHANT, STORE, TERMINAL }
@@ -169,12 +173,29 @@ public class AnalyticsExplorerController {
                                       ExplorerMasterItemRepository masterRepo,
                                       ExplorerAlertRepository alertRepo,
                                       ObjectMapper objectMapper,
-                                      CurrencyMeta currencyMeta) {
+                                      CurrencyMeta currencyMeta,
+                                      ReportCache reportCache) {
         this.jdbcTemplate = jdbcTemplate;
         this.masterRepo = masterRepo;
         this.alertRepo = alertRepo;
         this.objectMapper = objectMapper;
         this.currencyMeta = currencyMeta;
+        this.reportCache = reportCache;
+    }
+
+    /**
+     * Cache a query payload keyed by tenant + the full serialized request.
+     * Results never depend on the calling user (only createdBy on writes does),
+     * so no user scope in the key. Unserializable request: compute uncached.
+     */
+    private <T> T cachedReport(String prefix, Long tenantId, Object request, java.util.function.Supplier<T> loader) {
+        String rk;
+        try {
+            rk = objectMapper.writeValueAsString(request);
+        } catch (tools.jackson.core.JacksonException e) {
+            return loader.get();
+        }
+        return reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, prefix + ":" + tenantId + ":" + rk, loader);
     }
 
     // ═════════════════════════════════════════════════════════
@@ -383,7 +404,15 @@ public class AnalyticsExplorerController {
 
         ResponseEntity<?> curResp = executeCore(cloneForWindow(query, query.getStartDate(), query.getEndDate(), new ArrayList<>(curMeasures)));
         if (!curResp.getStatusCode().is2xxSuccessful()) return curResp;
-        List<Map<String, Object>> curRows = extractData(curResp);
+        // executeCore's rows are cached: copy each row before the TI columns are
+        // put onto it. Case-insensitive like JdbcTemplate's maps, since Postgres
+        // folds unquoted aliases to lowercase.
+        List<Map<String, Object>> curRows = new ArrayList<>();
+        for (Map<String, Object> r : extractData(curResp)) {
+            Map<String, Object> copy = new org.springframework.util.LinkedCaseInsensitiveMap<>();
+            copy.putAll(r);
+            curRows.add(copy);
+        }
 
         List<String> dimAliases = (query.getDimensions() == null ? List.<String>of() : query.getDimensions())
             .stream().map(this::sanitizeAlias).collect(Collectors.toList());
@@ -546,6 +575,7 @@ public class AnalyticsExplorerController {
     }
 
     /** Returns the field catalog — what's available to drag and drop. */
+    @ReportResponse
     @GetMapping("/fields")
     public ResponseEntity<Map<String, Object>> getFieldCatalog() {
         Map<String, Object> catalog = new LinkedHashMap<>();
@@ -573,6 +603,7 @@ public class AnalyticsExplorerController {
      * the dim table for entity fields, the summary table for summary-capable txn fields,
      * the fact table only for fact-only txn fields. All tenant-scoped.
      */
+    @ReportResponse
     @GetMapping("/distinct/{fieldKey}")
     public ResponseEntity<?> getDistinctValues(@PathVariable String fieldKey,
                                                 @RequestParam(defaultValue = "200") int limit) {
@@ -597,8 +628,11 @@ public class AnalyticsExplorerController {
         String sql = "SELECT DISTINCT " + expr + " AS val FROM " + table +
                      " WHERE tenant_id = ? AND " + expr + " IS NOT NULL" +
                      " ORDER BY val LIMIT ?";
+        // Failures escape the loader (not cached) and keep the old empty-list answer.
+        String key = "explorerDistinct:" + tenantId + ":" + fieldKey + ":" + limit;
         try {
-            return ResponseEntity.ok(jdbcTemplate.queryForList(sql, String.class, tenantId, limit));
+            return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_LOOKUPS, key,
+                    () -> jdbcTemplate.queryForList(sql, String.class, tenantId, limit)));
         } catch (Exception e) {
             logger.error("Failed to fetch distinct values for {}: {}", fieldKey, e.getMessage());
             return ResponseEntity.ok(Collections.emptyList());
@@ -606,6 +640,7 @@ public class AnalyticsExplorerController {
     }
 
     /** Core query endpoint — chooses the grain, then executes the aggregation. */
+    @ReportResponse
     @PostMapping("/query")
     public ResponseEntity<?> executeQuery(@RequestBody ExplorerQuery query) {
         if (query.getTimeMeasures() != null && !query.getTimeMeasures().isEmpty())
@@ -801,15 +836,22 @@ public class AnalyticsExplorerController {
 
         logger.debug("Explorer SQL [{}{}]: {}", grain, calcSqlByKey.isEmpty() ? "" : "+calc", finalSql);
 
+        // Only the successful payload is cached; a failed query escapes the loader
+        // and is answered with the same 500 body as before. The time-intelligence
+        // path reuses these per-window entries (it must not wrap them again).
+        final String sqlToRun = finalSql;
         try {
-            List<Map<String, Object>> results = jdbcTemplate.queryForList(finalSql, params.toArray());
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("data", results);
-            response.put("rowCount", results.size());
-            response.put("dimensions", dimensions);
-            response.put("measures", measures);
-            response.put("grain", grain.name().toLowerCase()); // "summary" | "fact" — observability
-            return ResponseEntity.ok(currencyMeta.attach(response, tenantId));
+            Map<String, Object> body = cachedReport("explorerQuery", tenantId, query, () -> {
+                List<Map<String, Object>> results = jdbcTemplate.queryForList(sqlToRun, params.toArray());
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("data", results);
+                response.put("rowCount", results.size());
+                response.put("dimensions", dimensions);
+                response.put("measures", measures);
+                response.put("grain", grain.name().toLowerCase()); // "summary" | "fact" — observability
+                return currencyMeta.attach(response, tenantId);
+            });
+            return ResponseEntity.ok(body);
         } catch (Exception e) {
             logger.error("Explorer query failed [{}]: {}", grain, e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Query failed: " + e.getMessage()));
@@ -821,6 +863,7 @@ public class AnalyticsExplorerController {
      * merchants). If transaction measures or non-merchant fields are involved, delegate
      * to the grain-aware fact/summary query so the numbers are real and reconcile.
      */
+    @ReportResponse
     @PostMapping("/query/merchants")
     public ResponseEntity<?> queryMerchants(@RequestBody ExplorerQuery query) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -867,15 +910,19 @@ public class AnalyticsExplorerController {
         if (!groupParts.isEmpty()) sql.append("GROUP BY ").append(String.join(", ", groupParts));
         sql.append(" ORDER BY record_count DESC LIMIT 1000");
 
+        final String sqlToRun = sql.toString();
         try {
-            List<Map<String, Object>> results = jdbcTemplate.queryForList(sql.toString(), params.toArray());
-            // Same keys as before (Map.of was immutable, so it could not take the
-            // currency block) plus "currency".
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("data", results);
-            response.put("rowCount", results.size());
-            response.put("dimensions", dimensions);
-            return ResponseEntity.ok(currencyMeta.attach(response, tenantId));
+            Map<String, Object> body = cachedReport("explorerMerchants", tenantId, query, () -> {
+                List<Map<String, Object>> results = jdbcTemplate.queryForList(sqlToRun, params.toArray());
+                // Same keys as before (Map.of was immutable, so it could not take the
+                // currency block) plus "currency".
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("data", results);
+                response.put("rowCount", results.size());
+                response.put("dimensions", dimensions);
+                return currencyMeta.attach(response, tenantId);
+            });
+            return ResponseEntity.ok(body);
         } catch (Exception e) {
             logger.error("Merchant explorer query failed: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Query failed: " + e.getMessage()));
@@ -895,6 +942,7 @@ public class AnalyticsExplorerController {
      * possible set (selections within a field are OR; across fields they are AND).
      * So when scoring field F we apply every selection EXCEPT F's own.
      */
+    @ReportResponse
     @PostMapping("/associative")
     public ResponseEntity<?> associative(@RequestBody AssocRequest req) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -1020,8 +1068,15 @@ public class AnalyticsExplorerController {
             }
         }
         sql.append("AND ").append(tExpr).append(" IS NOT NULL ORDER BY val LIMIT 500");
+        // Cached per (SQL, bound values) so each field's full/possible list is
+        // reused across clicks. A failure escapes the loader (not cached) and
+        // still degrades to the empty list below.
+        final String sqlToRun = sql.toString();
         try {
-            return jdbcTemplate.queryForList(sql.toString(), String.class, params.toArray());
+            String key = "explorerAssocDistinct:" + tenantId + ":" + sqlToRun + ":"
+                    + objectMapper.writeValueAsString(params);
+            return reportCache.get(ReportCacheConfig.CACHE_LOOKUPS, key,
+                    () -> jdbcTemplate.queryForList(sqlToRun, String.class, params.toArray()));
         } catch (Exception ex) {
             logger.error("Associative distinct failed: {}", ex.getMessage());
             return Collections.emptyList();

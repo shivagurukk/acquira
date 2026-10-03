@@ -4,7 +4,7 @@ import {
     PieChart, Pie, Cell
 } from 'recharts';
 import { Layers, BarChart3, Store, CreditCard, DollarSign, TrendingUp, Inbox, AlertTriangle } from 'lucide-react';
-import { Grid, Box, Paper, Typography, Stack, FormControl, InputLabel, Select, MenuItem, TextField, Collapse, Alert } from '@mui/material';
+import { Grid, Box, Paper, Typography, Stack, FormControl, InputLabel, Select, MenuItem, TextField, Collapse, Alert } from '../../components/ui/system';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';

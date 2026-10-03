@@ -3,8 +3,8 @@ package com.acquira.pdf.service;
 import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.dto.TestDto;
 import com.acquira.common.dto.MerchantInsightsDTO.*;
-import com.lowagie.text.*;
-import com.lowagie.text.pdf.*;
+import org.openpdf.text.*;
+import org.openpdf.text.pdf.*;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.JFreeChart;
 import org.jfree.chart.labels.StandardPieSectionLabelGenerator;
@@ -755,7 +755,7 @@ public class PdfGenerationService {
             PdfPCell actionCell = createActionSignalCard("Action Signal",
                     "Launch targeted promotions on weekends to capitalize on higher revenue potential.");
 
-            rightCol.addElement((com.lowagie.text.Element) actionCell.getCompositeElements().get(0)); // Extract table?
+            rightCol.addElement((org.openpdf.text.Element) actionCell.getCompositeElements().get(0)); // Extract table?
                                                                                                       // No, usage:
             // createActionSignalCard returns wrapper PdfPCell containing table.
             // We can add that table directly.
@@ -1383,7 +1383,7 @@ public class PdfGenerationService {
             // The helper makes White BG.
 
             java.awt.image.BufferedImage imgTrend11 = trendChart11.createBufferedImage(500, 250);
-            com.lowagie.text.Image chartImg11 = com.lowagie.text.Image.getInstance(writer, imgTrend11, 1.0f);
+            org.openpdf.text.Image chartImg11 = org.openpdf.text.Image.getInstance(writer, imgTrend11, 1.0f);
             PdfPCell chartCell = new PdfPCell(chartImg11);
             chartCell.setBorder(Rectangle.NO_BORDER);
             chartCell.setPadding(10);
@@ -3095,7 +3095,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, width, height);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
             inner.addElement(new Paragraph("Chart Error"));
@@ -3510,7 +3510,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, 380, 180);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
             inner.addElement(new Paragraph("Chart Error"));
@@ -3741,7 +3741,7 @@ public class PdfGenerationService {
         inner.addElement(header);
 
         // Bullet points
-        com.lowagie.text.List list = new com.lowagie.text.List(false, 10); // false for unnumbered, 10 for indentation
+        org.openpdf.text.List list = new org.openpdf.text.List(false, 10); // false for unnumbered, 10 for indentation
         list.setListSymbol(new Chunk(" \u2022 ", iconFont)); // Unicode bullet or dingbat
         list.add(new ListItem("Sales velocity peaked during weekend hours, confirming high recreational spending.",
                 bulletFont));
@@ -3843,7 +3843,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, 520, 240);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
             inner.addElement(new Paragraph("Chart Error"));
@@ -4486,7 +4486,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, 520, 260);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
             inner.addElement(new Paragraph("Chart Error"));
@@ -5300,7 +5300,7 @@ public class PdfGenerationService {
         PdfPCell chartCell;
         try {
             java.awt.image.BufferedImage imgImpact = chart.createBufferedImage(350, 200);
-            com.lowagie.text.Image chartImgImpact = com.lowagie.text.Image.getInstance(writer, imgImpact, 1.0f);
+            org.openpdf.text.Image chartImgImpact = org.openpdf.text.Image.getInstance(writer, imgImpact, 1.0f);
             chartCell = new PdfPCell(chartImgImpact);
         } catch (Exception e) {
             chartCell = new PdfPCell(new Phrase("Chart Error"));
@@ -6183,7 +6183,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, 520, 220);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
             inner.addElement(new Paragraph("Chart Error"));
@@ -6227,7 +6227,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, 240, 160);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
             inner.addElement(new Paragraph("Chart Error"));
@@ -6444,7 +6444,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, 240, 140);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
         }
@@ -6715,7 +6715,7 @@ public class PdfGenerationService {
             Rectangle2D r2d = new Rectangle2D.Double(0, 0, width, height);
             chart.draw(g2d, r2d);
             g2d.dispose();
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             inner.addElement(chartImage);
         } catch (Exception e) {
             inner.addElement(new Paragraph("Chart Error"));
@@ -7112,7 +7112,7 @@ public class PdfGenerationService {
             chart.draw(g2d, r2d);
             g2d.dispose();
 
-            com.lowagie.text.Image chartImage = com.lowagie.text.Image.getInstance(template);
+            org.openpdf.text.Image chartImage = org.openpdf.text.Image.getInstance(template);
             chartImage.setWidthPercentage(100);
 
             PdfPCell imgCell = new PdfPCell(chartImage);

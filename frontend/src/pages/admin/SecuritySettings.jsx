@@ -26,8 +26,8 @@ const POLICY_DEFAULTS = {
     mfaGraceDays: 7, trustedDeviceDays: 30,
     // network
     ipAllowlistEnabled: false, ipAllowlist: '', loginBusinessHoursOnly: false,
-    // api + audit
-    apiKeyExpiryDays: 0, auditRetentionDays: 365, maskPiiInUi: true,
+    // audit
+    auditRetentionDays: 365, maskPiiInUi: true,
 };
 
 /* Which groups are actually enforced by the backend today vs. stored-only */
@@ -191,7 +191,7 @@ const SecuritySettings = () => {
         { key: 'sessions', label: 'Sessions', icon: Clock },
         { key: 'mfa', label: 'MFA', icon: Smartphone },
         { key: 'network', label: 'Network', icon: Globe },
-        { key: 'api', label: 'API and audit', icon: Shield },
+        { key: 'audit', label: 'Audit and privacy', icon: Shield },
         { key: 'locked', label: 'Locked accounts', icon: ShieldAlert, count: lockedUsers.length },
     ];
 
@@ -337,11 +337,10 @@ const SecuritySettings = () => {
                     </Card>
                 )}
 
-                {activeTab === 'api' && (
-                    <Card pad title="API keys and audit" subtitle="External access and retention" actions={pendingBadge('api')}>
+                {activeTab === 'audit' && (
+                    <Card pad title="Audit and privacy" subtitle="Retention and data masking" actions={pendingBadge('audit')}>
                         <Stack gap="md">
                             <FormGrid cols={2}>
-                                {numField('API key expiry (days)', 'apiKeyExpiryDays', '0 means keys never expire, which is not recommended.')}
                                 {numField('Audit log retention (days)', 'auditRetentionDays', 'Older audit entries are purged.', 1)}
                             </FormGrid>
                             {toggle('Mask PII (card numbers, emails) in the UI', 'maskPiiInUi')}

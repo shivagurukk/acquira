@@ -12,8 +12,15 @@ import { Page, Card, Button, DataTable, Modal, FormField, Input } from '../../co
 modal, tab strip, badge or form control, the kit already has it. Reach for
 inline styles only for genuinely one-off layout.
 
-`Page` and `DataTable` are MUI-free. Do not add `@mui/*` imports to migrated
-pages — MUI retirement is the end state of the frontend cleanup.
+MUI is retired: no `@mui/*` or `@emotion/*` package is installed, so do not add
+one back. New screens use this kit.
+
+Older report pages were written against the MUI API (`Box`, `Typography`,
+`sx`, `DataGrid`, …). They now import the same names from `./system`
+(`components/ui/system`), an in-house layer that implements only the props
+those pages use and keeps the `Mui*` class names their styles target. Treat
+`./system` as a compatibility layer for existing pages — extend it when one of
+them needs a prop it lacks, but build new UI with the kit components below.
 
 ---
 

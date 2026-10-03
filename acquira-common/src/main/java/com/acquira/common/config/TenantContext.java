@@ -62,6 +62,25 @@ public class TenantContext {
         return list;
     }
 
+    /**
+     * Every tenant this thread can read — current plus visible — sorted and
+     * de-duplicated; empty when no tenant is set. Never throws (unlike
+     * {@link #getVisibleTenants()}): the report cache scopes its keys with this
+     * on threads that may legitimately have no tenant.
+     */
+    public static List<Long> peekScope() {
+        java.util.TreeSet<Long> scope = new java.util.TreeSet<>();
+        Long current = currentTenant.get();
+        if (current != null) scope.add(current);
+        List<Long> visible = visibleTenants.get();
+        if (visible != null) {
+            for (Long t : visible) {
+                if (t != null) scope.add(t);
+            }
+        }
+        return List.copyOf(scope);
+    }
+
     // ===== ROLE CONTEXT =====
     public static void setCurrentRole(String role) {
         currentRole.set(role);

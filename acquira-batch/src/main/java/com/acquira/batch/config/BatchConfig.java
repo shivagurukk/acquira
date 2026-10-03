@@ -12,7 +12,14 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
+// @EnableBatchProcessing: the ingest jobs used to get their JobRepository from
+// the pdf module's MerchantReportJobConfig, which is not loaded in the batch pod
+// (acquira.role=batch). Declared here too so both roles get the same setup.
 @Configuration
+@org.springframework.batch.core.configuration.annotation.EnableBatchProcessing
+// Spring Batch 6: @EnableBatchProcessing alone now gives an in-memory job
+// repository; this keeps job history in the BATCH_* tables as before.
+@org.springframework.batch.core.configuration.annotation.EnableJdbcJobRepository
 @EnableScheduling
 @EnableAsync
 public class BatchConfig {

@@ -24,9 +24,11 @@ vi.mock('../contexts/AuthContext', () => ({
     }),
 }));
 vi.mock('../contexts/ToastContext', () => ({ showToast: vi.fn() }));
-vi.mock('@mui/material', () => ({
+// The drill-down drawer portals to <body> and locks scroll; render it inline
+// so the assertions can find its content. Everything else is the real layer.
+vi.mock('../components/ui/system', async (importOriginal) => ({
+    ...(await importOriginal()),
     Drawer: ({ open, children }) => (open ? <div data-testid="drawer">{children}</div> : null),
-    IconButton: ({ children, ...p }) => <button {...p}>{children}</button>,
 }));
 
 const day = (d, volume, nm, dcc, rental) => ({

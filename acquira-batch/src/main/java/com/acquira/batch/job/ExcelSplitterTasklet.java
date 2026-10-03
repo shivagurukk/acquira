@@ -4,10 +4,10 @@ import org.dhatim.fastexcel.reader.Cell;
 import org.dhatim.fastexcel.reader.ReadableWorkbook;
 import org.dhatim.fastexcel.reader.Row;
 import org.dhatim.fastexcel.reader.Sheet;
-import org.springframework.batch.core.StepContribution;
+import org.springframework.batch.core.step.StepContribution;
 import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Scope;
 import org.springframework.context.annotation.ScopedProxyMode;
@@ -227,7 +227,7 @@ public class ExcelSplitterTasklet implements Tasklet {
             throw new IllegalStateException("Input file does not exist: " + fullPath);
         }
 
-        String jobId = chunkContext.getStepContext().getStepExecution().getJobExecution().getId().toString();
+        String jobId = String.valueOf(chunkContext.getStepContext().getStepExecution().getJobExecution().getId());
         Path outputDir = Paths.get("temp", "job_" + jobId);
         Files.createDirectories(outputDir);
 

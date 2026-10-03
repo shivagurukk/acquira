@@ -1,7 +1,7 @@
 package com.acquira.pdf.service;
 
 import com.acquira.common.dto.MerchantInsightsDTO;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.Margin;
 import com.microsoft.playwright.options.WaitUntilState;
@@ -182,6 +182,9 @@ public class PlaywrightPdfService {
 
         """;
 
+    /** Dummy origin for font URLs; never reaches the network (context route). */
+    private static final String FONT_ORIGIN = "http://pdf.local";
+
     private static final List<String> BROWSER_ARGS = List.of(
             "--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox",
             "--disable-extensions", "--disable-background-networking",
@@ -234,6 +237,10 @@ public class PlaywrightPdfService {
                 if (fontBytes != null) {
                     route.fulfill(new Route.FulfillOptions()
                             .setContentType("font/ttf")
+                            // Font loads are CORS requests and the page (setContent →
+                            // about:blank) has an opaque origin: without this header
+                            // Chromium discards the font and falls back to system fonts.
+                            .setHeaders(Map.of("Access-Control-Allow-Origin", "*"))
                             .setBodyBytes(fontBytes));
                 } else {
                     route.abort();
@@ -327,9 +334,94 @@ public class PlaywrightPdfService {
     private boolean engineReady = false;
     public boolean isEngineReady() { return engineReady; }
 
+    // ─── Persisted job status (multi-replica / restart visibility) ─────────
+    // Field-injected and optional so directly constructed tests keep working.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PdfJobStore jobStore;
+
+    private static final long JOB_HEARTBEAT_MS = 3000;
+    private int heartbeatsSincePurge;
+    private final java.util.concurrent.ScheduledExecutorService jobHeartbeat =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "pdf-job-heartbeat");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private static boolean isFinished(BatchJobStatus s) {
+        return s.endTime != null || "FAILED".equals(s.phase);
+    }
+
+    private void persist(BatchJobStatus s) {
+        if (jobStore != null && s.tenantId != null) {
+            jobStore.save(s.jobId, PdfJobStore.KIND_BATCH, s.tenantId, s.toMap(), isFinished(s));
+        }
+    }
+
+    /**
+     * Every few seconds: write each local job's snapshot to the DB (this is
+     * also its liveness heartbeat) and pick up cancel requests that reached
+     * another replica.
+     */
+    private void heartbeatJobs() {
+        try {
+            if (jobStore == null) return;
+            // Finished jobs linger in activeJobs for 10 min but already wrote their
+            // final state in the pipeline's finally — don't re-upsert them every 3s.
+            List<String> running = new ArrayList<>();
+            activeJobs.values().forEach(s -> {
+                if (!isFinished(s)) { persist(s); running.add(s.jobId); }
+            });
+            if (!running.isEmpty()) {
+                for (String id : jobStore.cancelRequested(running)) {
+                    BatchJobStatus j = activeJobs.get(id);
+                    if (j != null && !j.cancelled && !isFinished(j)) {
+                        log.info("Batch {} cancelled by a request received on another replica", id);
+                        j.cancelled = true; j.phase = "CANCELLED";
+                    }
+                }
+            }
+            if (++heartbeatsSincePurge >= 1200) {   // ~hourly
+                heartbeatsSincePurge = 0;
+                jobStore.purgeOld();
+            }
+        } catch (Throwable t) {
+            log.debug("PDF job heartbeat failed: {}", t.toString());
+        }
+    }
+
+    /** Status of a batch for the UI: this replica's live job, else the DB copy. */
+    public Map<String, Object> jobStatusView(String jobId, Long tenantId) {
+        BatchJobStatus local = activeJobs.get(jobId);
+        if (local != null) return java.util.Objects.equals(local.tenantId, tenantId) ? local.toMap() : null;
+        return jobStore == null ? null : jobStore.find(jobId, PdfJobStore.KIND_BATCH, tenantId).orElse(null);
+    }
+
+    /** The tenant's batches: live ones here plus those other replicas own / recently finished. */
+    public List<Map<String, Object>> jobViews(Long tenantId) {
+        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+        activeJobs.values().forEach(s -> {
+            if (java.util.Objects.equals(s.tenantId, tenantId)) out.put(s.jobId, s.toMap());
+        });
+        if (jobStore != null) {
+            for (Map<String, Object> m : jobStore.list(PdfJobStore.KIND_BATCH, tenantId, 15)) {
+                out.putIfAbsent(String.valueOf(m.get("jobId")), m);
+            }
+        }
+        return new ArrayList<>(out.values());
+    }
+
+    /** Cancel a batch wherever it runs: here directly, else via a DB flag its owner polls. */
+    public boolean cancelJobAnywhere(String jobId, Long tenantId) {
+        BatchJobStatus local = activeJobs.get(jobId);
+        if (local != null) return java.util.Objects.equals(local.tenantId, tenantId) && cancelJob(jobId);
+        return jobStore != null && jobStore.requestCancel(jobId, tenantId);
+    }
+
     @PostConstruct
     public void init() {
         POOL_SIZE = Math.min(Math.max(configuredPoolSize, 1), 4);
+        jobHeartbeat.scheduleWithFixedDelay(this::heartbeatJobs, JOB_HEARTBEAT_MS, JOB_HEARTBEAT_MS, TimeUnit.MILLISECONDS);
         log.info("PDF Engine v5 starting — pool size: {}, chart wait: {}ms", POOL_SIZE, chartWaitMs);
         try {
             initInternal();
@@ -503,6 +595,7 @@ public class PlaywrightPdfService {
 
     private void preloadFontCache() {
         String[] fontFiles = {
+            // Must match the @font-face list in basic-report.html.
             "Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Bold.ttf",
             "PlayfairDisplay-Regular.ttf", "PlayfairDisplay-Bold.ttf"
         };
@@ -524,6 +617,7 @@ public class PlaywrightPdfService {
     @PreDestroy
     public void cleanup() {
         activeJobs.values().forEach(j -> j.cancelled = true);
+        jobHeartbeat.shutdownNow();
         if (browserPool != null) browserPool.forEach(BrowserSlot::destroy);
         log.info("PDF Engine shut down");
     }
@@ -706,9 +800,13 @@ public class PlaywrightPdfService {
         html = html.replace("<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>", "");
         html = patternGoogleFonts.matcher(html).replaceAll("");
 
-        // 5. @font-face with url('/assets/fonts/X.ttf') stays in template <style>
-        //    → Chromium loads them via the persistent context route
-        //    → Chromium subsets only used glyphs → small PDFs
+        // 5. @font-face url('/assets/fonts/X.ttf') in the template <style> is made
+        //    absolute: the page is loaded with setContent (about:blank), where a
+        //    root-relative URL resolves to nothing and no request is ever made.
+        //    The host is a dummy — the context route answers from memory.
+        //    → Chromium subsets only used glyphs → small PDFs, and pdf() does not
+        //      pay for embedding system fallback fonts (2× slower on Chromium 153).
+        html = html.replace("url('/assets/fonts/", "url('" + FONT_ORIGIN + "/assets/fonts/");
 
         return html;
     }
@@ -743,11 +841,14 @@ public class PlaywrightPdfService {
             java.util.function.BiFunction<Long, long[], MerchantInsightsDTO> dataFetcher,
             String targetFolder, String monthYear, String targetYearMonth) {
 
-        String jobId = "batch-" + System.currentTimeMillis();
+        // Random suffix: two replicas can start a batch in the same millisecond.
+        String jobId = "batch-" + System.currentTimeMillis() + "-"
+                + Integer.toHexString(java.util.concurrent.ThreadLocalRandom.current().nextInt(0x1000, 0x10000));
         int total = merchantIdList.size();
         BatchJobStatus status = new BatchJobStatus(jobId, total);
         status.tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
         activeJobs.put(jobId, status);
+        persist(status);
 
         Thread pipelineThread = new Thread(() -> {
             try {
@@ -873,6 +974,7 @@ public class PlaywrightPdfService {
                 status.phase = "FAILED"; status.endTime = Instant.now();
                 log.error("Batch pipeline failed", e); status.errors.add("CRITICAL: " + e.getMessage());
             } finally {
+                persist(status);   // final state, without waiting for the next heartbeat
                 CompletableFuture.delayedExecutor(10, TimeUnit.MINUTES).execute(() -> activeJobs.remove(jobId));
             }
         }, "pdf-batch-pipeline");

@@ -97,6 +97,10 @@ public class JwtUtil {
         return Jwts.builder()
                 .claims(claims)
                 .subject(subject)
+                // jti: iat has one-second resolution, so two tokens for the same
+                // user in the same second were byte-identical and the second
+                // login died on refresh_token.token_hash's unique constraint.
+                .id(java.util.UUID.randomUUID().toString())
                 .issuedAt(new Date(System.currentTimeMillis()))
                 .expiration(new Date(System.currentTimeMillis() + expiryMs))
                 .signWith(SECRET_KEY, Jwts.SIG.HS256)

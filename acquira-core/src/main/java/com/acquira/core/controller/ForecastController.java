@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.model.BankBudgetTarget;
 import com.acquira.common.model.SumMonthlyBank;
@@ -77,13 +78,63 @@ public class ForecastController {
     private final SumMonthlyBankRepository monthlyBankRepo;
     /** Stamps the tenant's currency onto every money-bearing response. */
     private final CurrencyMeta currencyMeta;
+    /**
+     * Report cache for the endpoints that read ONLY ingest-written tables
+     * (sum_daily_*, sum_monthly_bank, dim_merchant, dim_store). summary() and
+     * trend() also read bank_budget_target, which BudgetTargetController edits
+     * from the UI without evicting, so those two are deliberately NOT cached.
+     */
+    private final com.acquira.common.service.ReportCache reportCache;
+    /** Serializes the filter body into the cache key. */
+    private final tools.jackson.databind.ObjectMapper objectMapper;
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
 
     public ForecastController(BankBudgetTargetRepository budgetRepo,
                               SumMonthlyBankRepository monthlyBankRepo,
-                              CurrencyMeta currencyMeta) {
+                              CurrencyMeta currencyMeta,
+                              com.acquira.common.service.ReportCache reportCache,
+                              tools.jackson.databind.ObjectMapper objectMapper,
+                              com.acquira.common.service.ReportCacheWarmup reportCacheWarmup) {
         this.budgetRepo = budgetRepo;
         this.monthlyBankRepo = monthlyBankRepo;
         this.currencyMeta = currencyMeta;
+        this.reportCache = reportCache;
+        this.objectMapper = objectMapper;
+        this.reportCacheWarmup = reportCacheWarmup;
+    }
+
+    /**
+     * Warm the page's two parameter-free first requests: GET /seasonal (no
+     * asOfDate) and POST /rm-benchmark (its body is ignored by the query). Both
+     * resolve asOf exactly as the handlers do, so the keys match.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("forecast", tenantId -> {
+            LocalDate asOf = defaultAsOf(tenantId);
+            cachedSeasonal(tenantId, asOf);
+            cachedRmBenchmark(tenantId, asOf);
+        });
+    }
+
+    /** Latest business_date with data, else today — the default anchor every endpoint uses. */
+    private LocalDate defaultAsOf(Long tenantId) {
+        LocalDate d = latestDataDate(tenantId);
+        return d != null ? d : LocalDate.now();
+    }
+
+    /** Filter body as a cache-key fragment; null (= don't cache) if it can't be serialized. */
+    private String filterKey(com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
+    }
+
+    /** Copy before stamping the currency so a cached map is never mutated. */
+    private ResponseEntity<?> withCurrency(Map<String, Object> cached, Long tenantId) {
+        return ResponseEntity.ok(currencyMeta.attach(new LinkedHashMap<>(cached), tenantId));
     }
 
     // Metric → sum_daily_bank / sum_monthly_bank column. Matches the metric set
@@ -110,6 +161,7 @@ public class ForecastController {
      *
      * GET /api/business/forecast/summary?asOfDate=YYYY-MM-DD
      */
+    @ReportResponse
     @GetMapping("/summary")
     public ResponseEntity<?> summary(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
@@ -239,6 +291,7 @@ public class ForecastController {
      *
      * GET /api/business/forecast/trend?metric=VOLUME&asOfDate=YYYY-MM-DD
      */
+    @ReportResponse
     @GetMapping("/trend")
     public ResponseEntity<?> trend(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
@@ -346,6 +399,7 @@ public class ForecastController {
      *
      * GET /api/business/forecast/seasonal?asOfDate=YYYY-MM-DD
      */
+    @ReportResponse
     @GetMapping("/seasonal")
     public ResponseEntity<?> seasonal(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
@@ -355,8 +409,18 @@ public class ForecastController {
         if (tenantId == null) return ResponseEntity.status(403).build();
 
         LocalDate asOf = parseOrNull(asOfDate);
-        if (asOf == null) asOf = latestDataDate(tenantId);
-        if (asOf == null) asOf = LocalDate.now();
+        if (asOf == null) asOf = defaultAsOf(tenantId);
+        return withCurrency(cachedSeasonal(tenantId, asOf), tenantId);
+    }
+
+    /** Keyed on the RESOLVED asOf, so the defaulted and explicit requests share entries. */
+    private Map<String, Object> cachedSeasonal(Long tenantId, LocalDate asOf) {
+        String key = "forecastSeasonal:" + tenantId + ":" + asOf;
+        return reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> buildSeasonal(tenantId, asOf));
+    }
+
+    private Map<String, Object> buildSeasonal(Long tenantId, LocalDate asOf) {
         YearMonth ym = YearMonth.from(asOf);
 
         // Current month = MTD (fair like-for-like needs same elapsed window, but
@@ -386,7 +450,7 @@ public class ForecastController {
         resp.put("currentMonthLabel", monthLabel(ym.getYear() * 100 + ym.getMonthValue()));
         resp.put("priorYearMonthLabel", monthLabel(lySame.getYear() * 100 + lySame.getMonthValue()));
         resp.put("metrics", out);
-        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
+        return resp;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -404,17 +468,27 @@ public class ForecastController {
      *
      * POST /api/business/forecast/churn-prediction  (VolumeRevenueFilterDTO body)
      */
+    @ReportResponse
     @PostMapping("/churn-prediction")
     public ResponseEntity<?> churnPrediction(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
-            @RequestBody(required = false) com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
+            @RequestBody(required = false) com.acquira.common.dto.VolumeRevenueFilterDTO body) {
 
         Long tenantId = resolveTenant(headerTenant);
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new com.acquira.common.dto.VolumeRevenueFilterDTO();
+        final com.acquira.common.dto.VolumeRevenueFilterDTO filter =
+                body != null ? body : new com.acquira.common.dto.VolumeRevenueFilterDTO();
 
-        LocalDate asOf = latestDataDate(tenantId);
-        if (asOf == null) asOf = LocalDate.now();
+        final LocalDate asOf = defaultAsOf(tenantId);
+        String fk = filterKey(filter);
+        if (fk == null) return withCurrency(buildChurnPrediction(tenantId, asOf, filter), tenantId);
+        String key = "forecastChurn:" + tenantId + ":" + asOf + ":" + fk;
+        return withCurrency(reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> buildChurnPrediction(tenantId, asOf, filter)), tenantId);
+    }
+
+    private Map<String, Object> buildChurnPrediction(Long tenantId, LocalDate asOf,
+            com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
         LocalDate last30Start = asOf.minusDays(29);
         LocalDate prev30End   = last30Start.minusDays(1);
         LocalDate prev30Start = prev30End.minusDays(29);
@@ -525,7 +599,7 @@ public class ForecastController {
                 "model", "weighted heuristic (no ML)",
                 "weights", "volume decline 35, txn decline 20, inactivity 30, merchant age 15",
                 "windows", "last 30 days vs prior 30 days; inactivity scaled over 45 days"));
-        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
+        return resp;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -538,17 +612,27 @@ public class ForecastController {
      *
      * POST /api/business/forecast/margin-risk  (VolumeRevenueFilterDTO body)
      */
+    @ReportResponse
     @PostMapping("/margin-risk")
     public ResponseEntity<?> marginRisk(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
-            @RequestBody(required = false) com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
+            @RequestBody(required = false) com.acquira.common.dto.VolumeRevenueFilterDTO body) {
 
         Long tenantId = resolveTenant(headerTenant);
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new com.acquira.common.dto.VolumeRevenueFilterDTO();
+        final com.acquira.common.dto.VolumeRevenueFilterDTO filter =
+                body != null ? body : new com.acquira.common.dto.VolumeRevenueFilterDTO();
 
-        LocalDate asOf = latestDataDate(tenantId);
-        if (asOf == null) asOf = LocalDate.now();
+        final LocalDate asOf = defaultAsOf(tenantId);
+        String fk = filterKey(filter);
+        if (fk == null) return withCurrency(buildMarginRisk(tenantId, asOf, filter), tenantId);
+        String key = "forecastMarginRisk:" + tenantId + ":" + asOf + ":" + fk;
+        return withCurrency(reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> buildMarginRisk(tenantId, asOf, filter)), tenantId);
+    }
+
+    private Map<String, Object> buildMarginRisk(Long tenantId, LocalDate asOf,
+            com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
         LocalDate start = asOf.minusDays(29);
 
         boolean needStore = listNonEmpty(filter.getMccList());
@@ -636,7 +720,7 @@ public class ForecastController {
                 "model", "trailing 30-day margin",
                 "marginFormula", "net / gross * 100; net = total_margin (or MSF - interchange - scheme fees), gross = MSF",
                 "lowMarginThreshold", "< 20% margin; loss-making when net < 0"));
-        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
+        return resp;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -649,17 +733,27 @@ public class ForecastController {
      *
      * POST /api/business/forecast/peer-benchmark  (VolumeRevenueFilterDTO body)
      */
+    @ReportResponse
     @PostMapping("/peer-benchmark")
     public ResponseEntity<?> peerBenchmark(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
-            @RequestBody(required = false) com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
+            @RequestBody(required = false) com.acquira.common.dto.VolumeRevenueFilterDTO body) {
 
         Long tenantId = resolveTenant(headerTenant);
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new com.acquira.common.dto.VolumeRevenueFilterDTO();
+        final com.acquira.common.dto.VolumeRevenueFilterDTO filter =
+                body != null ? body : new com.acquira.common.dto.VolumeRevenueFilterDTO();
 
-        LocalDate asOf = latestDataDate(tenantId);
-        if (asOf == null) asOf = LocalDate.now();
+        final LocalDate asOf = defaultAsOf(tenantId);
+        String fk = filterKey(filter);
+        if (fk == null) return withCurrency(buildPeerBenchmark(tenantId, asOf, filter), tenantId);
+        String key = "forecastPeerBench:" + tenantId + ":" + asOf + ":" + fk;
+        return withCurrency(reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> buildPeerBenchmark(tenantId, asOf, filter)), tenantId);
+    }
+
+    private Map<String, Object> buildPeerBenchmark(Long tenantId, LocalDate asOf,
+            com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
         LocalDate start = asOf.minusDays(89);
 
         // Per-merchant totals + their MCC (from dim_store, joined on merchant_id
@@ -676,15 +770,22 @@ public class ForecastController {
         appendMerchantFilters(sql, filter, true);
         sql.append("  GROUP BY m.merchant_id, m.mid, m.name, m.sales_email ");
         sql.append("  HAVING SUM(s.total_base_volume) > 0 ");
+        sql.append("), ");
+        // percentile_cont is an ordered-set aggregate: Postgres rejects it with
+        // OVER (...), so the peer medians are aggregated per MCC and joined back.
+        sql.append("med AS ( ");
+        sql.append("  SELECT mcc, ");
+        sql.append("    percentile_cont(0.5) WITHIN GROUP (ORDER BY vol) AS peer_vol_median, ");
+        sql.append("    percentile_cont(0.5) WITHIN GROUP (ORDER BY msf) AS peer_msf_median, ");
+        sql.append("    percentile_cont(0.5) WITHIN GROUP (ORDER BY (vol / NULLIF(txns,0))) AS peer_ticket_median ");
+        sql.append("  FROM mtot GROUP BY mcc ");
         sql.append(") ");
         sql.append("SELECT mid, name, sales_email, mcc, vol, msf, txns, ");
         sql.append("  vol / NULLIF(txns,0) AS avg_ticket, ");
         sql.append("  percent_rank() OVER (PARTITION BY mcc ORDER BY vol) AS vol_pctile, ");
-        sql.append("  percentile_cont(0.5) WITHIN GROUP (ORDER BY vol) OVER (PARTITION BY mcc) AS peer_vol_median, ");
-        sql.append("  percentile_cont(0.5) WITHIN GROUP (ORDER BY msf) OVER (PARTITION BY mcc) AS peer_msf_median, ");
-        sql.append("  percentile_cont(0.5) WITHIN GROUP (ORDER BY (vol / NULLIF(txns,0))) OVER (PARTITION BY mcc) AS peer_ticket_median, ");
+        sql.append("  med.peer_vol_median, med.peer_msf_median, med.peer_ticket_median, ");
         sql.append("  COUNT(*) OVER (PARTITION BY mcc) AS peer_count ");
-        sql.append("FROM mtot ORDER BY vol DESC");
+        sql.append("FROM mtot JOIN med USING (mcc) ORDER BY vol DESC");
 
         Query q = entityManager.createNativeQuery(sql.toString());
         q.setParameter("tid", tenantId);
@@ -728,7 +829,7 @@ public class ForecastController {
                 "peerGroup", "same MCC",
                 "window", "trailing 90 days",
                 "index", "merchant metric / peer-group median * 100 (100 = at median)"));
-        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
+        return resp;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -741,6 +842,7 @@ public class ForecastController {
      *
      * POST /api/business/forecast/rm-benchmark  (VolumeRevenueFilterDTO body)
      */
+    @ReportResponse
     @PostMapping("/rm-benchmark")
     public ResponseEntity<?> rmBenchmark(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
@@ -748,10 +850,18 @@ public class ForecastController {
 
         Long tenantId = resolveTenant(headerTenant);
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new com.acquira.common.dto.VolumeRevenueFilterDTO();
+        // The filter body is accepted for API symmetry but the query ignores it
+        // (benchmark is always all RMs in the tenant), so it stays out of the key.
+        return withCurrency(cachedRmBenchmark(tenantId, defaultAsOf(tenantId)), tenantId);
+    }
 
-        LocalDate asOf = latestDataDate(tenantId);
-        if (asOf == null) asOf = LocalDate.now();
+    private Map<String, Object> cachedRmBenchmark(Long tenantId, LocalDate asOf) {
+        String key = "forecastRmBench:" + tenantId + ":" + asOf;
+        return reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> buildRmBenchmark(tenantId, asOf));
+    }
+
+    private Map<String, Object> buildRmBenchmark(Long tenantId, LocalDate asOf) {
         LocalDate start = asOf.minusDays(89);
 
         StringBuilder sql = new StringBuilder();
@@ -768,14 +878,19 @@ public class ForecastController {
         sql.append("    AND m.sales_email IS NOT NULL AND m.sales_email <> '' ");
         sql.append("  GROUP BY m.sales_email ");
         sql.append("  HAVING SUM(s.total_base_volume) > 0 ");
+        sql.append("), ");
+        // Same ordered-set-aggregate restriction as the peer benchmark.
+        sql.append("med AS ( ");
+        sql.append("  SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY vol) AS rm_vol_median, ");
+        sql.append("    percentile_cont(0.5) WITHIN GROUP (ORDER BY msf) AS rm_msf_median, ");
+        sql.append("    percentile_cont(0.5) WITHIN GROUP (ORDER BY active_merchants) AS rm_merch_median ");
+        sql.append("  FROM rmtot ");
         sql.append(") ");
         sql.append("SELECT rm, vol, msf, txns, active_merchants, ");
         sql.append("  percent_rank() OVER (ORDER BY vol) AS vol_pctile, ");
-        sql.append("  percentile_cont(0.5) WITHIN GROUP (ORDER BY vol) OVER () AS rm_vol_median, ");
-        sql.append("  percentile_cont(0.5) WITHIN GROUP (ORDER BY msf) OVER () AS rm_msf_median, ");
-        sql.append("  percentile_cont(0.5) WITHIN GROUP (ORDER BY active_merchants) OVER () AS rm_merch_median, ");
+        sql.append("  med.rm_vol_median, med.rm_msf_median, med.rm_merch_median, ");
         sql.append("  COUNT(*) OVER () AS rm_count ");
-        sql.append("FROM rmtot ORDER BY vol DESC");
+        sql.append("FROM rmtot CROSS JOIN med ORDER BY vol DESC");
 
         Query q = entityManager.createNativeQuery(sql.toString());
         q.setParameter("tid", tenantId);
@@ -819,7 +934,7 @@ public class ForecastController {
                 "peerGroup", "all RMs in tenant",
                 "window", "trailing 90 days",
                 "index", "RM metric / all-RM median * 100 (100 = at median)"));
-        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
+        return resp;
     }
 
     // ── Shared filter application for the merchant-grained endpoints above ──

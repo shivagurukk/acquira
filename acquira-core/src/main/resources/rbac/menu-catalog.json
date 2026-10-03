@@ -200,23 +200,6 @@
             ]
         },
         {
-            "key": "admin.api-management",
-            "icon": "Code",
-            "name": "API Management",
-            "path": "/admin/api-management",
-            "order": 8,
-            "module": "administration",
-            "actions": [
-                "EDIT",
-                "VIEW"
-            ],
-            "category": "ADMINISTRATION",
-            "grantView": [
-                "Bank Admin",
-                "Super Admin"
-            ]
-        },
-        {
             "key": "admin.maintenance",
             "icon": "Database",
             "name": "Database Maintenance",

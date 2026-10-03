@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { ThemeProvider as MuiThemeProvider, useColorScheme } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
-import { buildTheme } from '../theme';
+import '../components/ui/system/sx'; // mounts the component layer's base styles
 
 /**
  * Dark Mode — single source of truth for theming.
@@ -9,9 +7,9 @@ import { buildTheme } from '../theme';
  * Responsibilities:
  *   1. Tracks light/dark preference (localStorage + OS preference).
  *   2. Toggles the 'dark' class on <html> — this drives Tailwind, the
- *      index.css token sheet, AND the MUI colour scheme (the theme is
- *      built with cssVariables + colorSchemeSelector: 'class', so both
- *      schemes are emitted as CSS variables and the class picks one).
+ *      index.css token sheet, AND the in-house component layer (its
+ *      palette is CSS variables declared for :root and html.dark in
+ *      components/ui/system/system.css, so the class picks the scheme).
  *   3. Publishes CSS custom properties for inline-style components.
  *
  * The ledger palette lives in exactly two places: index.css (:root /
@@ -35,20 +33,6 @@ const DARK = {
   text: '#E7EAEF', textSecondary: '#98A2AF',
   border: '#272E38', borderLight: '#272E38',
   accent: '#5E82D2', accentLight: '#1C2637',
-};
-
-// One theme carrying both colour schemes — never rebuilt on toggle.
-const muiTheme = buildTheme();
-
-// Keeps MUI's internal colour-scheme state in step with our isDark flag,
-// so MUI and the html.dark class never disagree about the active scheme.
-const SyncMuiMode = ({ isDark }) => {
-  const { mode, setMode } = useColorScheme();
-  useEffect(() => {
-    const want = isDark ? 'dark' : 'light';
-    if (mode !== want) setMode(want);
-  }, [isDark, mode, setMode]);
-  return null;
 };
 
 export const ThemeProvider = ({ children }) => {
@@ -85,11 +69,7 @@ export const ThemeProvider = ({ children }) => {
 
   return (
     <ThemeContext.Provider value={ctx}>
-      <MuiThemeProvider theme={muiTheme} defaultMode={isDark ? 'dark' : 'light'}>
-        <SyncMuiMode isDark={isDark} />
-        <CssBaseline />
-        {children}
-      </MuiThemeProvider>
+      {children}
     </ThemeContext.Provider>
   );
 };

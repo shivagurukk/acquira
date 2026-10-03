@@ -59,9 +59,9 @@ public class DatabaseMaintenanceService {
         // Rewritten per ingest by calculateDailyDashboardMetricsTasklet (saveAll
         // upsert of the affected months).
         "sum_monthly_merchant_metrics",
-        // High insert volume + daily bulk retention deletes (ApiRequestLog /
-        // EmailQueueProcessor) — classic dead-tuple accumulators.
-        "api_request_log", "email_queue"
+        // High insert volume + daily bulk retention deletes (EmailQueueProcessor)
+        // — a classic dead-tuple accumulator.
+        "email_queue"
     );
 
     // Identifier whitelist — defends the VACUUM string-built statement.
@@ -74,6 +74,7 @@ public class DatabaseMaintenanceService {
     }
 
     // ── Poller: every 10 min after a 5 min startup delay ──
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-db-maintenance", lockAtLeastFor = "PT5M")
     @Scheduled(fixedDelayString = "${maintenance.poll-interval-ms:600000}",
                initialDelayString = "${maintenance.initial-delay-ms:300000}")
     public void poll() {

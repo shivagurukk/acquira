@@ -41,7 +41,9 @@ public class SalesAdminCacheEvictionInterceptor implements HandlerInterceptor {
         // has already changed the data the caches were built from. Clearing on
         // failure costs one cold load; serving stale data costs correctness.
         if (mutating) {
-            reportCache.evictAll();
+            // Sales hierarchy/targets are per tenant: drop only the tenant
+            // the edit was made under (null — no tenant header — clears all).
+            reportCache.evict("sales admin " + method, TenantContext.getCurrentTenant());
             log.info("Report caches cleared after sales admin mutation {} {} (status {})",
                     method, request.getRequestURI(), response.getStatus());
         }

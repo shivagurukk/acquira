@@ -2,13 +2,21 @@ package com.acquira.core;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.domain.EntityScan;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import com.acquira.common.config.PodRoleFilter;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
+/**
+ * The one application entry point for every pod. Which modules actually load is
+ * decided by {@code acquira.role} (all | core | pdf | batch) through
+ * {@link PodRoleFilter}; the default "all" is the original single-JVM app.
+ */
 @SpringBootApplication
-@ComponentScan(basePackages = {"com.acquira.common", "com.acquira.core", "com.acquira.batch", "com.acquira.pdf", "com.acquira.ai"})
+@ComponentScan(basePackages = {"com.acquira.common", "com.acquira.core", "com.acquira.batch", "com.acquira.pdf", "com.acquira.ai"},
+        excludeFilters = @ComponentScan.Filter(type = FilterType.CUSTOM, classes = PodRoleFilter.class))
 @EntityScan(basePackages = "com.acquira.common.model")
 @EnableJpaRepositories(basePackages = "com.acquira.common.repository")
 @EnableScheduling

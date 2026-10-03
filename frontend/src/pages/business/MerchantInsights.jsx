@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 import { Download, ChevronRight, ChevronLeft, CreditCard, LayoutGrid, Users, Award, PieChart } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Box, Typography, Stack, Paper, IconButton, Tabs, Tab } from '@mui/material';
+import { Box, Typography, Stack, Paper, IconButton, Tabs, Tab } from '../../components/ui/system';
 
 // ─── Dark Theme Palette ──────────────────────────────────────────────
 const DARK = {

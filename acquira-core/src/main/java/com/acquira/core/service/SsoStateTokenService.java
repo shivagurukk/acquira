@@ -56,6 +56,7 @@ public class SsoStateTokenService {
     }
 
     /** Cleanup expired state tokens (runs hourly) */
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-sso-state-cleanup", lockAtLeastFor = "PT1M")
     @Scheduled(cron = "0 30 * * * *")
     public void cleanupExpiredStates() {
         try {

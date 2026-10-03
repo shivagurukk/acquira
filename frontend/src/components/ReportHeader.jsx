@@ -10,7 +10,7 @@ import {
     CircularProgress,
     Paper,
     Collapse
-} from '@mui/material';
+} from './ui/system';
 import { Download, Filter, RefreshCw, Calendar as CalendarIcon } from 'lucide-react';
 
 const ReportHeader = ({

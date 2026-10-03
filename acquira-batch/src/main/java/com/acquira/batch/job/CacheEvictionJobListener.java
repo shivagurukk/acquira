@@ -1,12 +1,10 @@
 package com.acquira.batch.job;
 
-import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.service.ReportCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobExecutionListener;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.listener.JobExecutionListener;
 import org.springframework.stereotype.Component;
 
 /**
@@ -24,25 +22,20 @@ public class CacheEvictionJobListener implements JobExecutionListener {
 
     private static final Logger log = LoggerFactory.getLogger(CacheEvictionJobListener.class);
 
-    private final CacheManager cacheManager;
-    private final org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> warmup;
+    private final ReportCache reportCache;
 
-    public CacheEvictionJobListener(CacheManager cacheManager,
-            org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> warmup) {
-        this.cacheManager = cacheManager;
-        this.warmup = warmup;
+    public CacheEvictionJobListener(ReportCache reportCache) {
+        this.reportCache = reportCache;
     }
 
     @Override
     public void afterJob(JobExecution jobExecution) {
-        for (String name : ReportCacheConfig.ALL_CACHES) {
-            Cache cache = cacheManager.getCache(name);
-            if (cache != null) cache.clear();
-        }
+        // Through ReportCache, not the CacheManager: the dashboards are served
+        // by other instances (core / pdf pods) whose caches a local clear here
+        // would never reach.
+        Long tenantId = jobExecution.getJobParameters().getLong("tenantId");
+        reportCache.evict("job " + jobExecution.getJobInstance().getJobName(), tenantId);
         log.info("Report caches cleared after job {} ({})",
                 jobExecution.getJobInstance().getJobName(), jobExecution.getStatus());
-        Long tenantId = jobExecution.getJobParameters().getLong("tenantId");
-        warmup.ifAvailable(w -> w.requestWarm(
-                "job " + jobExecution.getJobInstance().getJobName(), tenantId));
     }
 }

@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.VolumeDropRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,7 +44,7 @@ public class VolumeDropController {
     private com.acquira.common.service.ReportCache reportCache;
 
     @Autowired
-    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private tools.jackson.databind.ObjectMapper objectMapper;
 
     @Autowired
     private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
@@ -69,7 +70,7 @@ public class VolumeDropController {
     private String filterKey(VolumeRevenueFilterDTO filter) {
         try {
             return objectMapper.writeValueAsString(filter);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (tools.jackson.core.JacksonException e) {
             return null;
         }
     }
@@ -94,11 +95,13 @@ public class VolumeDropController {
      * MIN/MAX business_date in sum_daily_merchant — the page anchors its
      * month picker and default as-of date here.
      */
+    @ReportResponse
     @GetMapping("/bounds")
     public Map<String, Object> getBounds() {
         return volumeDropRepository.getBounds(tenantService.getCurrentTenantId());
     }
 
+    @ReportResponse
     @PostMapping("/rows")
     public Map<String, Object> getRows(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);

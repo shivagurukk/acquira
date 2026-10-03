@@ -5,7 +5,7 @@ import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.model.Merchant;
 import com.acquira.common.repository.MerchantRepository;
 import com.acquira.common.service.MerchantInsightService;
-import com.acquira.pdf.service.PlaywrightPdfService;
+import com.acquira.core.service.PdfRenderClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -49,7 +49,16 @@ public class EmailController {
     private final JdbcTemplate jdbc;
     private final MerchantRepository merchantRepository;
     private final MerchantInsightService merchantInsightService;
-    private final PlaywrightPdfService playwrightPdfService;
+    private final PdfRenderClient pdfRenderClient;
+
+    /**
+     * Statement PDFs are written here and attached later by EmailQueueProcessor.
+     * Must be the configured reports dir (the shared volume in k8s), not the
+     * JVM's working directory — a relative path lands on the container's
+     * ephemeral filesystem and the queued attachment is gone after a restart.
+     */
+    @org.springframework.beans.factory.annotation.Value("${app.reports.dir:reports}")
+    private String reportsDir;
 
     /**
      * Resolve the ACTIVE tenant for the current request.
@@ -308,7 +317,7 @@ public class EmailController {
             }
             String monthYear = ym.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
                     + " " + ym.getYear();
-            pdf = playwrightPdfService.generatePdf(dto, merchantName, monthYear);
+            pdf = pdfRenderClient.generatePdf(dto, merchantName, monthYear);
         } catch (Exception e) {
             log.error("[EMAIL] PDF generation failed for merchant {} ({}): {}",
                     merchantName, merchantId, e.getMessage());
@@ -318,7 +327,7 @@ public class EmailController {
 
         Path pdfPath;
         try {
-            Path dir = Paths.get("reports", "statement-emails", ym.toString());
+            Path dir = Paths.get(reportsDir, "statement-emails", ym.toString());
             Files.createDirectories(dir);
             String safeName = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
             pdfPath = dir.resolve("Statement_" + safeName + "_" + ym + ".pdf").toAbsolutePath();

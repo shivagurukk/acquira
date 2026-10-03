@@ -1,8 +1,8 @@
 # Plan: every page loads under 2 seconds
 
-Status: **NOT APPLIED** — audit done 2026-09-03, all changes deferred by decision.
-The gzip edit to `deploy/docker/nginx.conf` was made and then rolled back on request;
-the exact block to re-apply is below.
+Status: audit done 2026-09-03. Step 1 (gzip in `deploy/docker/nginx.conf`) was
+re-applied 2026-10-03, without `gzip_static` since the build ships no `.gz` files;
+it still needs a frontend image rebuild to take effect.
 
 ---
 

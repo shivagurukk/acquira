@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Box, Paper, Typography, Chip, Stack, Button, Tooltip } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Box, Paper, Typography, Chip, Stack, Button, Tooltip } from '../../components/ui/system';
+import { DataGrid, GridToolbar } from '../../components/ui/system/DataGrid';
 import { ShieldAlert, TrendingDown, DollarSign, AlertTriangle, Users, Check, X, RotateCcw, Download } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';

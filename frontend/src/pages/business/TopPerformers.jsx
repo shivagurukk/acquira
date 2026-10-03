@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
-import { Box, Paper, Typography, Stack, IconButton, Tooltip } from '@mui/material';
+import { Box, Paper, Typography, Stack, IconButton, Tooltip } from '../../components/ui/system';
 import { Trophy, TrendingUp, Users, UserPlus, Sparkles, Download, ArrowUpRight, ArrowDownRight, Receipt, Layers } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';

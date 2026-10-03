@@ -41,6 +41,7 @@ public class ExplorerAlertScheduler {
     @Value("${explorer.alert.cooldown-hours:6}")
     private long cooldownHours;
 
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-explorer-alerts", lockAtLeastFor = "PT20M", lockAtMostFor = "PT30M")
     @Scheduled(fixedDelayString = "${explorer.alert.interval-ms:1800000}",
                initialDelayString = "${explorer.alert.initial-ms:120000}")
     public void evaluateAll() {

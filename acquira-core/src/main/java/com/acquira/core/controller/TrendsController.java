@@ -51,6 +51,21 @@ public class TrendsController {
     @org.springframework.beans.factory.annotation.Autowired
     private CurrencyMeta currencyMeta;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private tools.jackson.databind.ObjectMapper objectMapper;
+
+    /** Serialized filter body for the cache key; null means serve uncached. */
+    private String filterKey(TrendFilter filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
+    }
+
     private Long resolveTenant(Long headerTenant) {
         // SECURITY: the raw X-Tenant-Id header is attacker-controlled; use only the
         // filter-validated TenantContext (JwtRequestFilter rejects spoofed headers).
@@ -95,17 +110,29 @@ public class TrendsController {
      * ordered by month ascending.
      */
     @PostMapping("/monthly")
+    @com.acquira.common.config.ReportResponse
     public ResponseEntity<?> monthly(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
-            @RequestBody(required = false) TrendFilter filter) {
+            @RequestBody(required = false) TrendFilter body) {
 
         Long tenantId = resolveTenant(headerTenant);
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new TrendFilter();
+        final TrendFilter filter = body != null ? body : new TrendFilter();
 
+        // The range defaults from LocalDate.now() (year / presets), so the
+        // RESOLVED window goes in the key: a cached CURRENT_YEAR must not
+        // outlive Jan 1.
         LocalDate[] range = resolveRange(filter, null);
         LocalDate start = range[0], end = range[1];
 
+        String fk = filterKey(filter);
+        if (fk == null) return ResponseEntity.ok(monthlyRows(tenantId, filter, start, end));
+        String key = "trendsMonthly:" + tenantId + ":" + start + ".." + end + ":" + fk;
+        return ResponseEntity.ok(reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> monthlyRows(tenantId, filter, start, end)));
+    }
+
+    private List<Map<String, Object>> monthlyRows(Long tenantId, TrendFilter filter, LocalDate start, LocalDate end) {
         List<Object> params = new ArrayList<>();
         boolean needStore    = listNonEmpty(filter.getMcc());
         boolean needMerchant = listNonEmpty(filter.getRm()) || listNonEmpty(filter.getMid());
@@ -147,7 +174,7 @@ public class TrendsController {
             m.put("opt_in_volume", bd(r[5]));
             out.add(m);
         }
-        return ResponseEntity.ok(out);
+        return out;
     }
 
     /**
@@ -156,13 +183,14 @@ public class TrendsController {
      * { date (yyyy-MM-dd), count, volume, msf, opt_in_volume } ordered by date.
      */
     @PostMapping("/daily")
+    @com.acquira.common.config.ReportResponse
     public ResponseEntity<?> daily(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
-            @RequestBody(required = false) TrendFilter filter) {
+            @RequestBody(required = false) TrendFilter body) {
 
         Long tenantId = resolveTenant(headerTenant);
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new TrendFilter();
+        final TrendFilter filter = body != null ? body : new TrendFilter();
         if (filter.getMonth() == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "month is required for daily trend"));
         }
@@ -170,6 +198,14 @@ public class TrendsController {
         LocalDate[] range = resolveRange(filter, filter.getMonth());
         LocalDate start = range[0], end = range[1];
 
+        String fk = filterKey(filter);
+        if (fk == null) return ResponseEntity.ok(dailyRows(tenantId, filter, start, end));
+        String key = "trendsDaily:" + tenantId + ":" + start + ".." + end + ":" + fk;
+        return ResponseEntity.ok(reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> dailyRows(tenantId, filter, start, end)));
+    }
+
+    private List<Map<String, Object>> dailyRows(Long tenantId, TrendFilter filter, LocalDate start, LocalDate end) {
         List<Object> params = new ArrayList<>();
         boolean needStore    = listNonEmpty(filter.getMcc());
         boolean needMerchant = listNonEmpty(filter.getRm()) || listNonEmpty(filter.getMid());
@@ -203,7 +239,7 @@ public class TrendsController {
             m.put("opt_in_volume", bd(r[4]));
             out.add(m);
         }
-        return ResponseEntity.ok(out);
+        return out;
     }
 
     /**
@@ -221,18 +257,30 @@ public class TrendsController {
      * with rows = top 100 by volume desc.
      */
     @PostMapping("/merchants")
+    @com.acquira.common.config.ReportResponse
     public ResponseEntity<?> merchants(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
-            @RequestBody(required = false) TrendFilter filter) {
+            @RequestBody(required = false) TrendFilter body) {
 
         Long tenantId = resolveTenant(headerTenant);
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new TrendFilter();
-        LocalDate day = parse(filter.getDateFrom());
+        final TrendFilter filter = body != null ? body : new TrendFilter();
+        final LocalDate day = parse(filter.getDateFrom());
         if (day == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "dateFrom (yyyy-MM-dd) is required for merchant trend"));
         }
 
+        String fk = filterKey(filter);
+        Map<String, Object> rows = fk == null ? merchantRows(tenantId, filter, day)
+                : reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                        "trendsMerchants:" + tenantId + ":" + day + ":" + fk,
+                        () -> merchantRows(tenantId, filter, day));
+        // Currency is stamped on a per-request copy: the cached map is never
+        // mutated, and a tenant currency change is never served stale.
+        return ResponseEntity.ok(currencyMeta.attach(new LinkedHashMap<String, Object>(rows), tenantId));
+    }
+
+    private Map<String, Object> merchantRows(Long tenantId, TrendFilter filter, LocalDate day) {
         List<Object> params = new ArrayList<>();
         boolean needStore = listNonEmpty(filter.getMcc());
 
@@ -284,7 +332,7 @@ public class TrendsController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("totalMerchants", totalMerchants);
         resp.put("rows", out);
-        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
+        return resp;
     }
 
     // ── Range resolution ──

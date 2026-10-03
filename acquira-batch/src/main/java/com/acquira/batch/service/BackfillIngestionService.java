@@ -73,17 +73,10 @@ public class BackfillIngestionService {
     // CacheEvictionJobListener never fires for it — clear the report caches
     // here, same contract as BulkMigrationService.evictReportCaches.
     @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.cache.CacheManager cacheManager;
-
-    @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> reportCacheWarmup;
+    private com.acquira.common.service.ReportCache reportCache;
 
     private void evictReportCaches() {
-        for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
-            org.springframework.cache.Cache cache = cacheManager.getCache(name);
-            if (cache != null) cache.clear();
-        }
-        reportCacheWarmup.ifAvailable(w -> w.requestWarm("backfill"));
+        reportCache.evict("backfill", null);
     }
 
     @Async

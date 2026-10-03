@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.16</version>
+        <version>4.1.1</version>
         <relativePath/>
     </parent>
     <groupId>com.acquira</groupId>
@@ -17,14 +17,24 @@
     <properties>
         <java.version>21</java.version>
         <jjwt.version>0.13.0</jjwt.version>
-        <aws.sdk.version>2.53.0</aws.sdk.version>
-        <lombok.version>1.18.46</lombok.version>
+        <aws.sdk.version>2.55.11</aws.sdk.version>
+        <lombok.version>1.18.48</lombok.version>
         <!-- Pin Spring Boot's managed JDBC driver versions to the patched
              releases so transitive resolution matches the direct declarations
              in acquira-batch (no version skew across modules). -->
-        <mssql-jdbc.version>12.2.1.jre11</mssql-jdbc.version>
+        <mssql-jdbc.version>12.10.2.jre11</mssql-jdbc.version>
         <oracle-database.version>23.26.3.0.0</oracle-database.version>
-        <openpdf.version>1.4.2</openpdf.version>
+        <!-- Held at 42.7.11 (Boot 4.1.1 manages 42.7.13). On 42.7.13 a large
+             reWriteBatchedInserts batch with untyped date/timestamp binds
+             (setTimestamp/setDate/setNull — every staging writer in
+             acquira-batch) deadlocks: the driver blocks in sendBind while the
+             server blocks in ClientWrite, and the ingest hangs forever.
+             Deterministic with 16 KB socket buffers, intermittent on defaults;
+             42.7.7 and 42.7.11 are immune down to 1 KB. Re-test a 100k-row
+             upload with ...data-source-properties.receiveBufferSize=16384
+             before raising this. -->
+        <postgresql.version>42.7.11</postgresql.version>
+        <openpdf.version>3.0.5</openpdf.version>
         <jfreechart.version>1.5.6</jfreechart.version>
         <!-- Smile ML (pure-JVM: no native BLAS needed for RandomForest) -->
         <smile.version>2.6.0</smile.version>
@@ -51,7 +61,7 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
+            <artifactId>spring-boot-starter-aspectj</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -79,7 +89,7 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.9.1</version>
+            <version>3.1.1</version>
         </dependency>
 
         <!-- ===== TEST DEPENDENCIES ===== -->
@@ -136,7 +146,7 @@
             <plugin>
                 <groupId>org.owasp</groupId>
                 <artifactId>dependency-check-maven</artifactId>
-                <version>12.2.2</version>
+                <version>13.0.0</version>
                 <configuration>
                     <assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
                 </configuration>

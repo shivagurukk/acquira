@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Box, Paper, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button, Chip, Stack, Tooltip } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Box, Paper, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button, Chip, Stack, Tooltip } from '../../components/ui/system';
+import { DataGrid, GridToolbar } from '../../components/ui/system/DataGrid';
 import { BarChart2, DollarSign, Hash, Layers, AlertTriangle } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';

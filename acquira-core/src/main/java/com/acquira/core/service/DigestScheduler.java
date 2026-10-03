@@ -91,6 +91,7 @@ public class DigestScheduler {
         this.emailService = emailService;
     }
 
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-digest", lockAtLeastFor = "PT2M")
     @Scheduled(fixedDelayString = "${acquira.digest.interval-ms:300000}",
                initialDelayString = "${acquira.digest.initial-delay-ms:90000}")
     public void tick() {

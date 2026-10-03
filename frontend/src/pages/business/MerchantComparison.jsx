@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box, Typography, Stack, Chip, CircularProgress, Autocomplete,
     TextField, Paper, Divider, Tooltip,
-} from '@mui/material';
+} from '../../components/ui/system';
 import {
     BarChart3, DollarSign, Hash, TrendingUp, Award, RefreshCw,
     Users, ArrowRight, Zap, Target, CreditCard,

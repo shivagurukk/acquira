@@ -165,7 +165,7 @@ echo   Setup Complete!
 echo  ============================================================
 echo   Frontend : http://localhost:5173
 echo   Backend  : http://localhost:8081
-echo   Login    : admin / admin123
+echo   Login    : admin / password  (must be changed at first login)
 echo   S3 Setup : http://localhost:5173/admin/s3-settings
 echo   SMTP     : http://localhost:5173/admin/smtp-settings
 echo  ============================================================

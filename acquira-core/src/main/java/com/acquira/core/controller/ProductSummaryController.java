@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.repository.ProductSummaryRepository;
 import com.acquira.common.repository.VolumeRevenueRepository;
@@ -71,6 +72,7 @@ public class ProductSummaryController {
         });
     }
 
+    @ReportResponse
     @PostMapping("/product-summary")
     public ResponseEntity<Map<String, Object>> getProductSummary(
             @RequestParam(required = false) String date,
@@ -116,7 +118,10 @@ public class ProductSummaryController {
         boolean fx = fxEnabled(tenantId);
         final LocalDate fStart = start, fEnd = end;
         final String fLabel = selectionLabel;
-        String key = "productSummary:" + tenantId + ":" + start + ".." + end + ":fx" + fx;
+        // selection + month are echoed in the payload, so they are part of the key.
+        String monthKey = month != null && !month.isBlank() ? month.trim() : "";
+        String key = "productSummary:" + tenantId + ":" + start + ".." + end + ":fx" + fx
+                + ":sel=" + selectionLabel + ":m=" + monthKey;
         return ResponseEntity.ok(reportCache.get(
                 ReportCacheConfig.CACHE_REPORT_DATA, key,
                 () -> build(tenantId, fStart, fEnd, fLabel, month, fx)));
@@ -144,6 +149,7 @@ public class ProductSummaryController {
     }
 
     /** Month list (+ latest date) for the period picker — same feed as Net Spread. */
+    @ReportResponse
     @GetMapping("/product-summary/calendar")
     public ResponseEntity<Map<String, Object>> getCalendar() {
         Long tenantId = TenantContext.getCurrentTenant();

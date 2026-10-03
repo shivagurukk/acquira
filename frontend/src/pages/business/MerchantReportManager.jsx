@@ -3,7 +3,7 @@ import {
     Box, Card, Typography, Button, LinearProgress, Chip, Stack,
     useTheme, Paper, CircularProgress, Avatar, Container, Grid,
     FormControlLabel, Switch, Dialog, DialogContent
-} from '@mui/material';
+} from '../../components/ui/system';
 import {
     FileText, Zap, Clock, FileCheck, Building2, AlertTriangle, Shield, UploadCloud,
     // Aliased to the former @mui/icons-material names so usage below is unchanged.

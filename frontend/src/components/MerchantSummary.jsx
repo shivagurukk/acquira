@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem, Grid, Button } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem, Grid, Button } from './ui/system';
+import { DataGrid, GridToolbar } from './ui/system/DataGrid';
 import { Download, LayoutGrid, RotateCcw, Calendar, Inbox, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../theme/dataGridStyles';

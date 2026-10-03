@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.model.MerchantOpportunityScore;
 import com.acquira.common.repository.MerchantActivitySummaryRepository;
@@ -241,6 +242,7 @@ public class BusinessController {
          * fake-zero weeks. Net margin is the corrected
          * msf − interchange − scheme_fee figure.
          */
+        @ReportResponse
         @GetMapping("/ceo-summary")
         public ResponseEntity<Map<String, Object>> getCeoSummary(
                         @RequestParam(defaultValue = "ALL") String channel) {
@@ -538,6 +540,7 @@ public class BusinessController {
          * the expression would fail at runtime. The explicit form also returns a
          * useful JSON body instead of a bare 403.
          */
+        @ReportResponse
         @GetMapping("/ceo-volume-revenue")
         public ResponseEntity<Map<String, Object>> getCeoVolumeRevenue(
                         @RequestParam(defaultValue = "MTD") String mode,

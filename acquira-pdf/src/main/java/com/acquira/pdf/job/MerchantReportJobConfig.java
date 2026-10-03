@@ -7,15 +7,15 @@ import com.acquira.common.service.MerchantInsightService;
 import com.acquira.pdf.service.PlaywrightPdfService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
+import org.springframework.batch.core.job.Job;
+import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.data.RepositoryItemReader;
-import org.springframework.batch.item.data.builder.RepositoryItemReaderBuilder;
+import org.springframework.batch.infrastructure.item.ItemWriter;
+import org.springframework.batch.infrastructure.item.data.RepositoryItemReader;
+import org.springframework.batch.infrastructure.item.data.builder.RepositoryItemReaderBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.Sort;
@@ -65,6 +65,8 @@ import java.util.stream.Collectors;
  */
 @Configuration
 @EnableBatchProcessing
+// Spring Batch 6: keep the JDBC (BATCH_* tables) job repository; see BatchConfig.
+@org.springframework.batch.core.configuration.annotation.EnableJdbcJobRepository
 @RequiredArgsConstructor
 @Slf4j
 public class MerchantReportJobConfig {

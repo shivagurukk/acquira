@@ -49,6 +49,7 @@ public class IngestAlertScheduler {
         this.workingWeek = workingWeek;
     }
 
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-ingest-alerts", lockAtLeastFor = "PT20M", lockAtMostFor = "PT30M")
     @Scheduled(fixedDelayString = "${acquira.ingest.alerts.interval-ms:1800000}",
                initialDelayString = "${acquira.ingest.alerts.initial-delay-ms:120000}")
     public void scan() {

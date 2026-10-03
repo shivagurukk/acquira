@@ -37,7 +37,7 @@ public class FileUploadController {
     @PostMapping("/merchant")
     public ResponseEntity<?> uploadMerchantFile(@RequestParam("file") MultipartFile file) {
         try {
-            org.springframework.batch.core.JobExecution execution = fileUploadService.processMerchantFile(file);
+            org.springframework.batch.core.job.JobExecution execution = fileUploadService.processMerchantFile(file);
             return ResponseEntity.ok(mapJobExecution(execution, "Merchant file processing started"));
         } catch (Exception e) {
             log.error("Merchant file upload failed", e);
@@ -52,7 +52,7 @@ public class FileUploadController {
             if (paymentDate == null) {
                 paymentDate = java.time.LocalDate.now().toString();
             }
-            org.springframework.batch.core.JobExecution execution = fileUploadService.processTransactionFile(file,
+            org.springframework.batch.core.job.JobExecution execution = fileUploadService.processTransactionFile(file,
                     paymentDate);
             return ResponseEntity.ok(mapJobExecution(execution, "Transaction file processing started"));
         } catch (Exception e) {
@@ -64,7 +64,7 @@ public class FileUploadController {
     @PostMapping("") // Maps to /api/upload
     public ResponseEntity<?> uploadUnifiedFile(@RequestParam("file") MultipartFile file) {
         try {
-            org.springframework.batch.core.JobExecution execution = fileUploadService.processUnifiedFile(file);
+            org.springframework.batch.core.job.JobExecution execution = fileUploadService.processUnifiedFile(file);
             return ResponseEntity.ok(mapJobExecution(execution, "File processing started"));
         } catch (Exception e) {
             log.error("Unified file upload failed", e);
@@ -125,7 +125,7 @@ public class FileUploadController {
         }
     }
 
-    private java.util.Map<String, Object> mapJobExecution(org.springframework.batch.core.JobExecution execution,
+    private java.util.Map<String, Object> mapJobExecution(org.springframework.batch.core.job.JobExecution execution,
             String message) {
         java.util.Map<String, Object> response = new java.util.HashMap<>();
         response.put("jobId", execution.getId());

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip, Drawer, IconButton, Divider, Popover } from '@mui/material';
-import { DataGrid } from '@mui/x-data-grid';
+import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip, Drawer, IconButton, Divider, Popover } from '../../components/ui/system';
+import { DataGrid } from '../../components/ui/system/DataGrid';
 import { Activity, AlertTriangle, X, CalendarClock, ArrowRight, Info, Scale } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt, convertForDisplay, isUsdDisplay } from '../../utils/formatters';

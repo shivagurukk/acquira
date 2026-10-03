@@ -92,6 +92,7 @@ public class InterchangeScanService {
     // ── Triggers ──────────────────────────────────────────────────────────────
 
     /** Scheduled sweep of both subfolders. Off by default; enable with the flag. */
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "batch-interchange-scan", lockAtLeastFor = "PT1M")
     @Scheduled(cron = "${acquira.interchange.scheduler.cron:0 */5 * * * ?}")
     public void scheduledScan() {
         if (!schedulerEnabled) {

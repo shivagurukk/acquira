@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Paper, Typography, Chip, Stack } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Box, Paper, Typography, Chip, Stack } from '../../components/ui/system';
+import { DataGrid, GridToolbar } from '../../components/ui/system/DataGrid';
 import { Lightbulb, Target, TrendingUp, Users } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';

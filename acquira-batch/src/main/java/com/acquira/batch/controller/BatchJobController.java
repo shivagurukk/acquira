@@ -1,8 +1,8 @@
 package com.acquira.batch.controller;
 
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobInstance;
-import org.springframework.batch.core.explore.JobExplorer;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
+import org.springframework.batch.core.repository.explore.JobExplorer;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -146,7 +146,7 @@ public class BatchJobController {
         int writeCount = 0;
         int skipCount = 0;
 
-        for (org.springframework.batch.core.StepExecution step : jobExecution.getStepExecutions()) {
+        for (org.springframework.batch.core.step.StepExecution step : jobExecution.getStepExecutions()) {
             readCount += step.getReadCount();
             writeCount += step.getWriteCount();
             skipCount += step.getSkipCount();

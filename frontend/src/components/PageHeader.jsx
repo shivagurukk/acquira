@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Typography, Stack, Breadcrumbs, Link as MuiLink } from '@mui/material';
+import { Box, Typography, Stack, Breadcrumbs, Link as MuiLink } from './ui/system';
 import { useLocation, Link } from 'react-router-dom';
 
 // Page header — hairline bottom border, no icon chip (icons are a

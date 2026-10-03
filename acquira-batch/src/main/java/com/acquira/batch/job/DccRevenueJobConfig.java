@@ -2,16 +2,16 @@ package com.acquira.batch.job;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
+import org.springframework.batch.core.job.Job;
+import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.batch.infrastructure.item.ItemProcessor;
+import org.springframework.batch.infrastructure.item.ItemWriter;
+import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -140,7 +140,7 @@ public class DccRevenueJobConfig {
 
     @Bean
     public Step ingestDccStep(
-            @org.springframework.beans.factory.annotation.Qualifier("dccFileReader") org.springframework.batch.item.ItemStreamReader<DccRow> dccFileReader,
+            @org.springframework.beans.factory.annotation.Qualifier("dccFileReader") org.springframework.batch.infrastructure.item.ItemStreamReader<DccRow> dccFileReader,
             @org.springframework.beans.factory.annotation.Qualifier("dccTenantProcessor") ItemProcessor<DccRow, DccRow> dccTenantProcessor,
             @org.springframework.beans.factory.annotation.Qualifier("dccWriter") ItemWriter<DccRow> dccWriter) {
         return new StepBuilder("ingestDccStep", jobRepository)
@@ -161,7 +161,7 @@ public class DccRevenueJobConfig {
 
     @Bean
     @StepScope
-    public org.springframework.batch.item.ItemStreamReader<DccRow> dccFileReader(
+    public org.springframework.batch.infrastructure.item.ItemStreamReader<DccRow> dccFileReader(
             @Value("#{jobParameters['fullPath']}") String fullPath) {
         ExcelItemReader<DccRow> reader = new ExcelItemReader<>();
         reader.setResource(new FileSystemResource(fullPath));

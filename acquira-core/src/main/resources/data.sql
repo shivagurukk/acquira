@@ -225,7 +225,7 @@ INSERT INTO role (role_name) VALUES ('ROLE_ADMIN'), ('ROLE_USER'), ('ROLE_SUPER_
 -- Seeded with a BCrypt hash of 'password' and must_change_password=TRUE so the
 -- first login is forced to rotate it. Never seed a {noop} plaintext credential.
 INSERT INTO users (username, password_hash, email, role, is_active, must_change_password)
-VALUES ('admin', '$2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
+VALUES ('admin', '{bcrypt}$2a$10$.IXqGR/fldztbmhzxbtEDOj4q4Lldh6BeoyNsYG3xxG1ufO3dCtWe', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
 ON CONFLICT (username) DO NOTHING;
 
 -- 5. User Groups (schema.sql creates all groups; this is a safety fallback)

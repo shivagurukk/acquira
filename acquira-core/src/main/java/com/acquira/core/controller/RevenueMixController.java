@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.RevenueMixRepository;
 import jakarta.persistence.EntityManager;
@@ -44,7 +45,7 @@ public class RevenueMixController {
     private com.acquira.common.service.ReportCache reportCache;
 
     @Autowired
-    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private tools.jackson.databind.ObjectMapper objectMapper;
 
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
@@ -55,7 +56,7 @@ public class RevenueMixController {
     private String filterKey(VolumeRevenueFilterDTO filter) {
         try {
             return objectMapper.writeValueAsString(filter);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (tools.jackson.core.JacksonException e) {
             return null;
         }
     }
@@ -176,11 +177,13 @@ public class RevenueMixController {
         return f;
     }
 
+    @ReportResponse
     @GetMapping("/bounds")
     public Map<String, Object> getBounds() {
         return revenueMixRepository.getBounds(tenantService.getCurrentTenantId());
     }
 
+    @ReportResponse
     @PostMapping({"/matrix", "/matrix/{dimension}"})
     public org.springframework.http.ResponseEntity<?> getMatrix(@RequestBody VolumeRevenueFilterDTO filters,
             @PathVariable(required = false) String dimension) {
@@ -205,6 +208,7 @@ public class RevenueMixController {
                         () -> revenueMixRepository.getMatrix(filters, dim, tenantId, fx)));
     }
 
+    @ReportResponse
     @PostMapping("/trend")
     public List<Map<String, Object>> getTrend(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);

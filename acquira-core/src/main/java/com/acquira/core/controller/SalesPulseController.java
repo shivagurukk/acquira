@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.model.SalesAgentProfile;
 import com.acquira.common.service.ChannelSql;
 import com.acquira.common.service.NetSpreadSql;
@@ -124,6 +125,7 @@ public class SalesPulseController {
     //  MAIN
     // ═══════════════════════════════════════════════════════════
 
+    @ReportResponse
     @GetMapping
     public ResponseEntity<?> pulse(
             @RequestParam(defaultValue = "MTD") String period,
@@ -138,8 +140,11 @@ public class SalesPulseController {
         // POS / ECOM route to the channel-scoped relation (ChannelSql);
         // anything else is ALL = the untouched sum_daily_merchant read.
         String ch = ChannelSql.normalize(channel);
+        // Attach to a shallow copy: the built map is the cached instance, and
+        // writing into it per request races Jackson serializing it elsewhere.
         return ResponseEntity.ok(currencyMeta.attach(
-                cachedBuild(tenantId, period, dateFrom, dateTo, teamLeadId, countryLeadId, targetMetric, ch),
+                new LinkedHashMap<>(cachedBuild(tenantId, period, dateFrom, dateTo, teamLeadId, countryLeadId,
+                        targetMetric, ch)),
                 tenantId));
     }
 

@@ -6,11 +6,11 @@ import com.acquira.common.service.CryptoService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.batch.core.JobParametersBuilder;
-import org.springframework.batch.core.explore.JobExplorer;
+import org.springframework.batch.core.job.Job;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
+import org.springframework.batch.core.repository.explore.JobExplorer;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -108,12 +108,13 @@ public class IntegrationPullService {
     /**
      * Failure-alert seam: publishes IntegrationRunFailedEvent on a FINAL failed
      * attempt; the core module's listener emails the schedule's recipients.
+     * Goes through the outbox because core may be a different pod.
      * Field-injected (required=false) for the same reason as tenantStatusService
      * — the explicit @Qualifier constructor and direct-construction tests stay
      * untouched.
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private com.acquira.common.event.EventOutbox eventOutbox;
 
     /**
      * Self-reference through the Spring proxy, used ONLY by scheduleRetry.
@@ -210,6 +211,26 @@ public class IntegrationPullService {
      * preventing.
      */
     private final ConcurrentHashMap<Long, ReentrantLock> tenantLocks = new ConcurrentHashMap<>();
+
+    /**
+     * Same serialization ACROSS replicas: the in-JVM lock above only covers
+     * this pod, so each pull also holds a ShedLock row
+     * "batch-pull-tenant-&lt;id&gt;" for its whole duration (kept alive while it
+     * runs, freed within 10 min if the pod dies). Optional so directly
+     * constructed tests keep working — without it only the in-JVM lock applies.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private net.javacrumbs.shedlock.core.LockProvider lockProvider;
+
+    private static final net.javacrumbs.shedlock.core.SimpleLock NO_CLUSTER_LOCK = () -> { };
+
+    /** @return the cluster lock, or null when another replica is pulling for this tenant. */
+    private net.javacrumbs.shedlock.core.SimpleLock tryClusterLock(Long tenantId) {
+        if (lockProvider == null) return NO_CLUSTER_LOCK;
+        return lockProvider.lock(new net.javacrumbs.shedlock.core.LockConfiguration(
+                Instant.now(), "batch-pull-tenant-" + tenantId,
+                java.time.Duration.ofMinutes(10), java.time.Duration.ZERO)).orElse(null);
+    }
 
     /**
      * Execute a DB pull for a given report configuration.
@@ -315,7 +336,16 @@ public class IntegrationPullService {
         }
 
         ReentrantLock lock = tenantLocks.computeIfAbsent(tenantId, t -> new ReentrantLock());
-        if (!lock.tryLock()) {
+        net.javacrumbs.shedlock.core.SimpleLock clusterLock = null;
+        boolean locked = lock.tryLock();
+        if (locked) {
+            clusterLock = tryClusterLock(tenantId);
+            if (clusterLock == null) {   // another replica is pulling for this tenant
+                lock.unlock();
+                locked = false;
+            }
+        }
+        if (!locked) {
             // Fail fast for THIS attempt (queueing against the shared staging
             // table is the race we prevent), but re-schedule rather than fail
             // the run outright: two schedules for one tenant firing at the
@@ -427,7 +457,7 @@ public class IntegrationPullService {
             // type follows the same rule as before: the report's explicit
             // amounts_minor_units flag wins, else the tenant's input_format —
             // which is exactly what FileUploadService.inputTypeForTenant does.
-            org.springframework.batch.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer = null;
+            org.springframework.batch.infrastructure.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer = null;
             if (report.getReportType() == IntegrationReport.ReportType.TRANSACTION && transactionJobConfig != null) {
                 boolean minorUnits = report.getAmountsMinorUnits() != null
                         ? report.getAmountsMinorUnits()
@@ -521,6 +551,9 @@ public class IntegrationPullService {
                 runLog.setErrorMessage(e.getMessage() + " (not retried — this failure would recur unchanged)");
             }
         } finally {
+            try { clusterLock.unlock(); } catch (Exception ue) {
+                log.warn("[Integration] Could not release cluster pull lock for tenant {}: {}", tenantId, ue.getMessage());
+            }
             lock.unlock();
             finishRunLog(runLog, startMs);
 
@@ -622,6 +655,7 @@ public class IntegrationPullService {
      * pull polls its batch job for at most 2h (JOB_POLL_TIMEOUT_MS), so a
      * RUNNING/RETRYING row untouched for 3h is dead. Runs every 15 minutes.
      */
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "batch-integration-reap-stale", lockAtLeastFor = "PT5M")
     @Scheduled(fixedDelay = 15L * 60L * 1000L)
     public void reapStaleRuns() {
         try {
@@ -786,7 +820,7 @@ public class IntegrationPullService {
     private PullResult pullToStaging(IntegrationReport report, IntegrationConnection config,
                                      Map<String, Object> params, Map<String, String> columnMap,
                                      Long tenantId, SkipTracker skips,
-                                     org.springframework.batch.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer) {
+                                     org.springframework.batch.infrastructure.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer) {
         final String stagingTable;
         final String insertSql;
         final java.util.function.Function<Map<String, Object>, Object[]> mapper;
@@ -1424,7 +1458,7 @@ public class IntegrationPullService {
      */
     private Object[] mapTransactionArgs(Map<String, Object> row, Map<String, String> columnMap,
                                         Long tenantId, SkipTracker skips,
-                                        org.springframework.batch.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer) {
+                                        org.springframework.batch.infrastructure.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer) {
         try {
             Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date", "Payment Date"));
             if (paymentDate == null) {
@@ -2021,7 +2055,7 @@ public class IntegrationPullService {
      */
     private void publishFailureAlert(IntegrationRunLog runLog) {
         try {
-            if (eventPublisher == null) return;
+            if (eventOutbox == null) return;
             if (runLog.getStatus() != IntegrationRunLog.Status.FAILED) return;
             IntegrationSchedule schedule = runLog.getSchedule();
             if (schedule == null) return;
@@ -2030,7 +2064,7 @@ public class IntegrationPullService {
             if (recipients == null || recipients.isBlank()) return;
 
             IntegrationReport report = runLog.getReport();
-            eventPublisher.publishEvent(new com.acquira.common.event.IntegrationRunFailedEvent(
+            eventOutbox.publish(runLog.getTenantId(), new com.acquira.common.event.IntegrationRunFailedEvent(
                     runLog.getTenantId(),
                     runLog.getId(),
                     schedule.getId(),

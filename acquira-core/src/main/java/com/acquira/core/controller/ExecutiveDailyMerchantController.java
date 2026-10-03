@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.VolumeRevenueRepository;
@@ -34,7 +35,7 @@ public class ExecutiveDailyMerchantController {
     private final VolumeRevenueRepository volumeRevenueRepository;
     private final com.acquira.common.service.ReportCache reportCache;
     /** Serializes the filter DTO into a stable cache-key suffix. */
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
     private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
@@ -83,7 +84,7 @@ public class ExecutiveDailyMerchantController {
                 filter = objectMapper.readValue(
                         "{\"mccList\":[],\"destinationList\":[],\"cardTypeList\":[],\"schemeList\":[],\"rmList\":[]}",
                         VolumeRevenueFilterDTO.class);
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            } catch (tools.jackson.core.JacksonException e) {
                 return;
             }
             String fk = filterKey(filter);
@@ -109,7 +110,7 @@ public class ExecutiveDailyMerchantController {
     private String filterKey(VolumeRevenueFilterDTO filter) {
         try {
             return objectMapper.writeValueAsString(filter);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (tools.jackson.core.JacksonException e) {
             return null;
         }
     }
@@ -130,6 +131,7 @@ public class ExecutiveDailyMerchantController {
      *   date=YYYY-MM-DD      single day
      *   (none)               the latest loaded business date
      */
+    @ReportResponse
     @PostMapping("/executive-daily-merchant")
     public ResponseEntity<Map<String, Object>> getDailyMerchants(
             @RequestParam(required = false) String date,
@@ -313,6 +315,7 @@ public class ExecutiveDailyMerchantController {
      * date selection and filters — the drilldown drawer's detail. Read from the
      * same summary as the table, so the parts always sum to the row.
      */
+    @ReportResponse
     @PostMapping("/executive-daily-merchant/breakdown")
     public ResponseEntity<Map<String, Object>> getMerchantBreakdown(
             @RequestParam Long merchantId,
@@ -378,6 +381,7 @@ public class ExecutiveDailyMerchantController {
     }
 
     /** Latest loaded business dates for the date-pill row (default 5). */
+    @ReportResponse
     @GetMapping("/executive-daily-merchant/recent-dates")
     public ResponseEntity<Map<String, Object>> getRecentDates(
             @RequestParam(defaultValue = "5") int limit) {
@@ -398,6 +402,7 @@ public class ExecutiveDailyMerchantController {
      * loaded business date inside that month, so the pill row always mirrors
      * what is actually loaded, never a synthetic calendar.
      */
+    @ReportResponse
     @GetMapping("/executive-daily-merchant/calendar")
     public ResponseEntity<Map<String, Object>> getCalendar(
             @RequestParam(required = false) String month) {

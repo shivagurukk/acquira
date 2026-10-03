@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Box, Typography, TextField, IconButton, Tooltip, Fade, Collapse,
     Chip, Stack, Select, MenuItem, FormControl, LinearProgress
-} from '@mui/material';
+} from '../../components/ui/system';
 import {
     Sparkles, Code2, Table2, BarChart3, Copy, Check, Trash2, Zap,
     ChevronDown, ChevronUp, Wifi, WifiOff, BrainCircuit, TrendingUp,

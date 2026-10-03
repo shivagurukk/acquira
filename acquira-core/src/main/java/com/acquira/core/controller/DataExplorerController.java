@@ -1,6 +1,9 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
+import com.acquira.common.service.ReportCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -63,10 +66,24 @@ public class DataExplorerController {
     private final JdbcTemplate jdbcTemplate;
     /** Stamps the tenant's currency onto every money-bearing response. */
     private final CurrencyMeta currencyMeta;
+    private final ReportCache reportCache;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
-    public DataExplorerController(JdbcTemplate jdbcTemplate, CurrencyMeta currencyMeta) {
+    public DataExplorerController(JdbcTemplate jdbcTemplate, CurrencyMeta currencyMeta,
+            ReportCache reportCache, tools.jackson.databind.ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
         this.currencyMeta = currencyMeta;
+        this.reportCache = reportCache;
+        this.objectMapper = objectMapper;
+    }
+
+    /** The whole query spec (source, dimensions, measures, filters) as a cache key; null = don't cache. */
+    private String specKey(ExplorerQueryRequest request) {
+        try {
+            return objectMapper.writeValueAsString(request);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
     }
 
     private Long getTenantId() {
@@ -143,6 +160,7 @@ public class DataExplorerController {
     // 1. GET Filter Options — distinct values for each column
     // ═══════════════════════════════════════════════════════════
 
+    @ReportResponse
     @GetMapping("/options")
     // Cached per tenant: this endpoint runs ~16 DISTINCT scans (8 of them over
     // sum_daily_explorer's full history) plus a MIN/MAX, on every Explorer
@@ -221,6 +239,7 @@ public class DataExplorerController {
     // 2. POST Dynamic Query — Qlik-style pivot/aggregate
     // ═══════════════════════════════════════════════════════════
 
+    @ReportResponse
     @PostMapping("/query")
     public ResponseEntity<?> executeQuery(@RequestBody ExplorerQueryRequest request) {
         Long tenantId = getTenantId();
@@ -362,9 +381,21 @@ public class DataExplorerController {
 
             sql += " LIMIT 5000"; // Safety cap
 
-            log.info("Explorer query: {}", sql);
-
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, headParams.toArray());
+            // Only the rows are cached — keyed on tenant + the full request spec
+            // (the SQL and its params are a pure function of both). Validation
+            // errors above return before this point, and a failing query throws
+            // out of the loader uncached into the catch below. The currency block
+            // is attached per request, outside the cache.
+            final String finalSql = sql;
+            final Object[] args = headParams.toArray();
+            java.util.function.Supplier<List<Map<String, Object>>> load = () -> {
+                log.info("Explorer query: {}", finalSql);
+                return jdbcTemplate.queryForList(finalSql, args);
+            };
+            String spec = specKey(request);
+            List<Map<String, Object>> rows = spec == null ? load.get()
+                    : reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA,
+                            "dataExplorerQuery:" + tenantId + ":" + spec, load);
 
             Map<String, Object> response = new HashMap<>();
             response.put("data", rows);

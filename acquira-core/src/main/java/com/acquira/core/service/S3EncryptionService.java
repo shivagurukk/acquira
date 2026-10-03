@@ -25,6 +25,7 @@ import java.util.Base64;
  * Encryption key is derived from {@code app.encryption.key} (must be 32 chars / 256 bits).
  * Falls back to a dev key if not configured.
  */
+@com.acquira.common.config.LoadInRoles("pdf")
 @Service
 @Slf4j
 public class S3EncryptionService {

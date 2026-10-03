@@ -9,16 +9,16 @@ import com.acquira.common.model.SumMonthlyMerchantMetrics;
 
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.core.configuration.annotation.StepScope;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
+import org.springframework.batch.core.job.Job;
+import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.database.JdbcBatchItemWriter;
-import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
-import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.batch.infrastructure.item.ItemProcessor;
+import org.springframework.batch.infrastructure.item.ItemWriter;
+import org.springframework.batch.infrastructure.item.database.JdbcBatchItemWriter;
+import org.springframework.batch.infrastructure.item.database.builder.JdbcBatchItemWriterBuilder;
+import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -157,7 +157,7 @@ public class TransactionJobConfig {
     /** Run id published by IngestRunJobListener.beforeJob; null when the ledger is unavailable. */
     private static Long ingestRunIdOf(org.springframework.batch.core.scope.context.ChunkContext chunkContext) {
         try {
-            org.springframework.batch.item.ExecutionContext ctx = chunkContext.getStepContext()
+            org.springframework.batch.infrastructure.item.ExecutionContext ctx = chunkContext.getStepContext()
                 .getStepExecution().getJobExecution().getExecutionContext();
             return ctx.containsKey(IngestRunJobListener.CTX_RUN_ID)
                 ? ctx.getLong(IngestRunJobListener.CTX_RUN_ID) : null;
@@ -740,7 +740,7 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step csvWorkerStep(
-            org.springframework.batch.item.file.FlatFileItemReader<StagingTransaction> csvTransactionReader,
+            org.springframework.batch.infrastructure.item.file.FlatFileItemReader<StagingTransaction> csvTransactionReader,
             ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor,
             ItemWriter<StagingTransaction> highPerfTransactionWriter) {
         return new StepBuilder("csvWorkerStep", jobRepository)
@@ -749,13 +749,11 @@ public class TransactionJobConfig {
     }
 
     @Bean @StepScope
-    public org.springframework.batch.item.file.FlatFileItemReader<StagingTransaction> csvTransactionReader(
+    public org.springframework.batch.infrastructure.item.file.FlatFileItemReader<StagingTransaction> csvTransactionReader(
             @Value("#{stepExecutionContext['fileName']}") String fileName) {
-        org.springframework.batch.item.file.FlatFileItemReader<StagingTransaction> reader = new org.springframework.batch.item.file.FlatFileItemReader<>();
-        if (fileName != null) reader.setResource(new FileSystemResource(fileName));
-        reader.setLinesToSkip(1);
-        reader.setLineMapper(new org.springframework.batch.item.file.mapping.DefaultLineMapper<>() {{
-            setLineTokenizer(new org.springframework.batch.item.file.transform.DelimitedLineTokenizer() {{
+        // Spring Batch 6: FlatFileItemReader takes its LineMapper in the constructor.
+        org.springframework.batch.infrastructure.item.file.mapping.DefaultLineMapper<StagingTransaction> lineMapper = new org.springframework.batch.infrastructure.item.file.mapping.DefaultLineMapper<>() {{
+            setLineTokenizer(new org.springframework.batch.infrastructure.item.file.transform.DelimitedLineTokenizer() {{
                 setDelimiter(","); setQuoteCharacter('"');
                 setNames("Entity Name", "Aggregator Internal Id", "Aggregator Name", "AggregatorCode",
                         "MID", "Merchant Internal Id", "Merchant Name",
@@ -807,7 +805,10 @@ public class TransactionJobConfig {
                 t.setDestination(fieldSet.readString("Destination"));
                 return t;
             });
-        }});
+        }};
+        org.springframework.batch.infrastructure.item.file.FlatFileItemReader<StagingTransaction> reader = new org.springframework.batch.infrastructure.item.file.FlatFileItemReader<>(lineMapper);
+        if (fileName != null) reader.setResource(new FileSystemResource(fileName));
+        reader.setLinesToSkip(1);
         return reader;
     }
 
@@ -1739,7 +1740,7 @@ public class TransactionJobConfig {
             }
 
             try {
-                org.springframework.batch.item.ExecutionContext jobCtx =
+                org.springframework.batch.infrastructure.item.ExecutionContext jobCtx =
                     chunkContext.getStepContext().getStepExecution().getJobExecution().getExecutionContext();
                 int dqTotal = total != null ? total : 0;
                 int dqUnresolved = Math.max(0, dqTotal - (matched != null ? matched : 0));
@@ -2230,7 +2231,7 @@ public class TransactionJobConfig {
     }
 
     @Bean @StepScope
-    public org.springframework.batch.item.support.SynchronizedItemStreamReader<StagingTransaction> transactionExcelReader(
+    public org.springframework.batch.infrastructure.item.support.SynchronizedItemStreamReader<StagingTransaction> transactionExcelReader(
             @Value("#{jobParameters['fullPath']}") String fullPath) {
         ExcelItemReader<StagingTransaction> reader = new ExcelItemReader<>();
         reader.setResource(new FileSystemResource(fullPath));
@@ -2244,9 +2245,9 @@ public class TransactionJobConfig {
             t.setTxnCurrencyAmount(parseDecimal(reader.getCellValue(row, "Txn Currency Amount")));
             return t;
         });
-        org.springframework.batch.item.support.SynchronizedItemStreamReader<StagingTransaction> sync =
-            new org.springframework.batch.item.support.SynchronizedItemStreamReader<>();
-        sync.setDelegate(reader); return sync;
+        org.springframework.batch.infrastructure.item.support.SynchronizedItemStreamReader<StagingTransaction> sync =
+            new org.springframework.batch.infrastructure.item.support.SynchronizedItemStreamReader<>(reader);
+        return sync;
     }
 
     // Canonical implementation lives in IngestScopes (shared with the

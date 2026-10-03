@@ -2,7 +2,11 @@ package com.acquira.batch.controller;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.batch.core.*;
+import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
+import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.step.StepExecution;
 
 import java.time.LocalDateTime;
 
@@ -25,18 +29,18 @@ class BatchProgressWeightingTest {
     private static final String JOB = "transactionLoadJob";
 
     private JobExecution jobExecution(String status) {
-        JobExecution exec = new JobExecution(1L);
-        exec.setJobInstance(new JobInstance(1L, JOB));
+        JobExecution exec = new JobExecution(1L, new JobInstance(1L, JOB), new JobParameters());
         exec.setStatus(BatchStatus.valueOf(status));
         return exec;
     }
 
     /**
-     * createStepExecution (not the StepExecution constructor) is what registers
+     * Spring Batch 6 dropped createStepExecution; addStepExecution is what registers
      * the step against the job — weightedProgress walks getStepExecutions().
      */
     private StepExecution step(JobExecution job, String name, String status, int read) {
-        StepExecution s = job.createStepExecution(name);
+        StepExecution s = new StepExecution(job.getStepExecutions().size() + 1L, name, job);
+        job.addStepExecution(s);
         s.setStatus(BatchStatus.valueOf(status));
         s.setReadCount(read);
         s.setStartTime(LocalDateTime.now());
@@ -126,10 +130,9 @@ class BatchProgressWeightingTest {
     @Test
     @DisplayName("dbPullTransactionJob is weighted over its own stage list")
     void dbPullJobUsesItsOwnStageList() {
-        JobExecution job = new JobExecution(2L);
-        job.setJobInstance(new JobInstance(2L, "dbPullTransactionJob"));
+        JobExecution job = new JobExecution(2L, new JobInstance(2L, "dbPullTransactionJob"), new JobParameters());
         job.setStatus(BatchStatus.STARTED);
-        job.createStepExecution("ensurePartitionsStep").setStatus(BatchStatus.COMPLETED);
+        step(job, "ensurePartitionsStep", "COMPLETED", 0);
 
         // dbPull total weight = 1(adopt)+1+3+3+25+20+5+3+2+2+1(clearRunStaging) = 66;
         // ensurePartitions = 1 -> round(100/66) = 2.
@@ -139,8 +142,7 @@ class BatchProgressWeightingTest {
     @Test
     @DisplayName("an unknown job falls back to rows rather than reporting zero forever")
     void unknownJobFallsBackToRows() {
-        JobExecution job = new JobExecution(3L);
-        job.setJobInstance(new JobInstance(3L, "merchantMasterJob"));
+        JobExecution job = new JobExecution(3L, new JobInstance(3L, "merchantMasterJob"), new JobParameters());
         job.setStatus(BatchStatus.STARTED);
 
         assertEquals(50L, BatchProgressController.weightedProgress(job, 500, 1000));

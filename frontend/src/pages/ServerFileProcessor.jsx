@@ -3,7 +3,7 @@ import {
     Box, Card, Typography, Button, TextField, LinearProgress, Chip, Stack,
     Paper, CircularProgress, Avatar, Container, Grid, Alert, Divider,
     Table, TableHead, TableRow, TableCell, TableBody
-} from '@mui/material';
+} from '../components/ui/system';
 import {
     HardDrive, Server, FolderOpen, FileText, AlertTriangle,
     // Aliased to the former @mui/icons-material names so usage below is unchanged.

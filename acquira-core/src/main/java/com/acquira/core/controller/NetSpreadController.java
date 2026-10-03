@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.NetSpreadRepository;
@@ -45,14 +46,14 @@ public class NetSpreadController {
     private final NetSpreadRepository netSpreadRepository;
     private final VolumeRevenueRepository volumeRevenueRepository;
     private final com.acquira.common.service.ReportCache reportCache;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
 
     private String filterKey(VolumeRevenueFilterDTO filter) {
         try {
             return objectMapper.writeValueAsString(filter);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (tools.jackson.core.JacksonException e) {
             return null;
         }
     }
@@ -123,6 +124,7 @@ public class NetSpreadController {
      * loaded business date). export=true returns the whole filtered result
      * set unpaginated; the frontend builds the CSV.
      */
+    @ReportResponse
     @PostMapping("/net-spread")
     public ResponseEntity<Map<String, Object>> getNetSpread(
             @RequestParam(required = false) String date,
@@ -283,6 +285,7 @@ public class NetSpreadController {
     }
 
     /** Latest loaded business dates for the date-pill row (default 5). */
+    @ReportResponse
     @GetMapping("/net-spread/recent-dates")
     public ResponseEntity<Map<String, Object>> getRecentDates(
             @RequestParam(defaultValue = "5") int limit) {
@@ -297,6 +300,7 @@ public class NetSpreadController {
     }
 
     /** Month-driven date picker feed — same contract as the exec daily page. */
+    @ReportResponse
     @GetMapping("/net-spread/calendar")
     public ResponseEntity<Map<String, Object>> getCalendar(
             @RequestParam(required = false) String month) {

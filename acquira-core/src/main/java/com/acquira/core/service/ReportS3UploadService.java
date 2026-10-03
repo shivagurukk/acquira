@@ -23,6 +23,7 @@ import java.nio.file.Path;
  * PdfController references only the S3Uploader interface (in acquira-common),
  * avoiding a circular acquira-pdf → acquira-core dependency.
  */
+@com.acquira.common.config.LoadInRoles("pdf")
 @Service
 @RequiredArgsConstructor
 @Slf4j

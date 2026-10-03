@@ -3,6 +3,9 @@ package com.acquira.core.controller;
 import com.acquira.common.dto.MerchantSummaryDTO;
 import com.acquira.core.service.AnalyticsService;
 import com.acquira.common.config.TenantContext;
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
+import com.acquira.common.service.ReportCache;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.data.domain.Page;
@@ -32,12 +35,32 @@ public class AnalyticsController {
     /** Stamps the tenant's currency onto every money-bearing response. */
     private final CurrencyMeta currencyMeta;
 
+    private final ReportCache reportCache;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
     public AnalyticsController(AnalyticsService analyticsService,
             com.acquira.common.repository.SumDailyMerchantRepository sumDailyMerchantRepository,
-            CurrencyMeta currencyMeta) {
+            CurrencyMeta currencyMeta,
+            ReportCache reportCache,
+            tools.jackson.databind.ObjectMapper objectMapper,
+            com.acquira.common.service.ReportCacheWarmup reportCacheWarmup) {
         this.analyticsService = analyticsService;
         this.sumDailyMerchantRepository = sumDailyMerchantRepository;
         this.currencyMeta = currencyMeta;
+        this.reportCache = reportCache;
+        this.objectMapper = objectMapper;
+        this.reportCacheWarmup = reportCacheWarmup;
+    }
+
+    /**
+     * Warm the executive dashboard's first fetch: ExecutiveDashboard.jsx calls
+     * GET /analytics/executive with no params, so the date resolves to today,
+     * the same key the live request builds.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("analytics-executive", tenantId -> getExecutiveDashboard(null));
     }
 
     // Executive analytics back the dashboard screens; require the caller's group
@@ -45,18 +68,28 @@ public class AnalyticsController {
     // tenant-scoped, so this closes the "no dashboard grant at all" path without
     // breaking any group that legitimately sees the dashboard. SUPER_ADMIN passes.
     @PreAuthorize("@menuAccess.canAccess('/dashboard')")
+    @ReportResponse
     @GetMapping("/executive")
     public ResponseEntity<Map<String, Object>> getExecutiveDashboard(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        Map<String, Object> dashboard = analyticsService.getExecutiveDashboard(date);
-        // The service may hand back an immutable map; copy before adding the key so
-        // this never throws UnsupportedOperationException on some code path.
-        Map<String, Object> body = dashboard == null ? new java.util.LinkedHashMap<>()
-                : new java.util.LinkedHashMap<>(dashboard);
-        return ResponseEntity.ok(currencyMeta.attach(body));
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) throw new RuntimeException("No Tenant Context found");
+        // Resolve the service's "today" default here so the key carries the real date.
+        final LocalDate asOf = date != null ? date : LocalDate.now();
+        String key = "analyticsExecutive:" + tenantId + ":" + asOf;
+        Map<String, Object> body = reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key, () -> {
+            Map<String, Object> dashboard = analyticsService.getExecutiveDashboard(asOf);
+            // The service may hand back an immutable map; copy before adding the key so
+            // this never throws UnsupportedOperationException on some code path.
+            Map<String, Object> b = dashboard == null ? new java.util.LinkedHashMap<>()
+                    : new java.util.LinkedHashMap<>(dashboard);
+            return currencyMeta.attach(b, tenantId);
+        });
+        return ResponseEntity.ok(body);
     }
 
     @PreAuthorize("@menuAccess.canAccess('/merchant-summary')")
+    @ReportResponse
     @GetMapping("/merchant-summaries")
     public ResponseEntity<Page<MerchantSummaryDTO>> getMerchantSummaries(
             @RequestParam(defaultValue = "0") int year,
@@ -82,6 +115,16 @@ public class AnalyticsController {
             targetDate = LocalDate.now();
         }
 
+        // targetDate may default to today, so the RESOLVED date goes in the key.
+        final LocalDate asOf = targetDate;
+        String key = "analyticsMerchantSummaries:" + tenantId + ":" + asOf + ":" + page + ":" + size;
+        Page<MerchantSummaryDTO> result = reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> loadMerchantSummaries(tenantId, asOf, page, size));
+        return ResponseEntity.ok(result);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Page<MerchantSummaryDTO> loadMerchantSummaries(Long tenantId, LocalDate targetDate, int page, int size) {
         LocalDate startOfMonth = targetDate.withDayOfMonth(1);
         LocalDate startOfYear = targetDate.withDayOfYear(1);
 
@@ -150,7 +193,7 @@ public class AnalyticsController {
         countQuery.setParameter("tenantId", tenantId);
         long totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
-        return ResponseEntity.ok(new PageImpl<>(dtos, PageRequest.of(page, size), totalElements));
+        return new PageImpl<>(dtos, PageRequest.of(page, size), totalElements);
     }
 
     @PreAuthorize("@menuAccess.canAccess('/merchant-summary')")
@@ -290,6 +333,7 @@ public class AnalyticsController {
     }
 
     @PreAuthorize("@menuAccess.canAccess('/business/heatmap')")
+    @ReportResponse
     @GetMapping("/heatmap")
     public ResponseEntity<List<com.acquira.common.dto.MerchantHeatmapDTO>> getMerchantHeatmap(
             @RequestParam(required = false) Integer year) {
@@ -297,7 +341,9 @@ public class AnalyticsController {
         if (tenantId == null) return ResponseEntity.status(403).build();
         // Default to current calendar year (was hardcoded 2025).
         int yr = (year != null) ? year : LocalDate.now().getYear();
-        return ResponseEntity.ok(sumDailyMerchantRepository.findMerchantHeatmapDataForTenant(yr, tenantId));
+        String key = "analyticsHeatmap:" + tenantId + ":" + yr;
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> sumDailyMerchantRepository.findMerchantHeatmapDataForTenant(yr, tenantId)));
     }
 
     /**
@@ -317,6 +363,7 @@ public class AnalyticsController {
      * In both paths we always tenant-scope on s.tenant_id AND m.tenant_id.
      */
     @PreAuthorize("@menuAccess.canAccess('/business/heatmap')")
+    @ReportResponse
     @PostMapping("/heatmap-filtered")
     public ResponseEntity<List<com.acquira.common.dto.MerchantHeatmapDTO>> getMerchantHeatmapFiltered(
             @RequestParam(required = false) Integer year,
@@ -326,6 +373,21 @@ public class AnalyticsController {
         if (filter == null) filter = new com.acquira.common.dto.VolumeRevenueFilterDTO();
         int yr = (year != null) ? year : LocalDate.now().getYear();
 
+        final com.acquira.common.dto.VolumeRevenueFilterDTO f = filter;
+        String fk;
+        try {
+            fk = objectMapper.writeValueAsString(f);
+        } catch (tools.jackson.core.JacksonException e) {
+            fk = null;
+        }
+        if (fk == null) return ResponseEntity.ok(loadHeatmapFiltered(tenantId, yr, f));
+        String key = "analyticsHeatmapFiltered:" + tenantId + ":" + yr + ":" + fk;
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> loadHeatmapFiltered(tenantId, yr, f)));
+    }
+
+    private List<com.acquira.common.dto.MerchantHeatmapDTO> loadHeatmapFiltered(Long tenantId, int yr,
+            com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
         boolean usesCardFilters =
                 (filter.getSchemeList()      != null && !filter.getSchemeList().isEmpty())     ||
                 (filter.getCardTypeList()    != null && !filter.getCardTypeList().isEmpty())   ||
@@ -434,13 +496,23 @@ public class AnalyticsController {
                     : (row[3] != null ? new BigDecimal(row[3].toString()) : BigDecimal.ZERO);
             result.add(new com.acquira.common.dto.MerchantHeatmapDTO(merchantName, merchantId, mo, vol));
         }
-        return ResponseEntity.ok(result);
+        return result;
     }
 
     @PreAuthorize("@menuAccess.canAccess('/dashboard')")
+    @ReportResponse
     @GetMapping("/available-years")
     public ResponseEntity<List<Integer>> getAvailableYears() {
         Long tenantId = TenantContext.getCurrentTenant();
+        // The current year is always injected into the list, so it is part of the key.
+        int currentYear = LocalDate.now().getYear();
+        String key = "analyticsAvailableYears:" + tenantId + ":" + currentYear;
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_LOOKUPS, key,
+                () -> loadAvailableYears(tenantId, currentYear)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Integer> loadAvailableYears(Long tenantId, int currentYear) {
         // sum_daily_bank, not sum_daily_merchant: same set of business dates
         // (both are written per ingest day by populateSummaryStep), but bank is
         // one row per tenant per day (~365/yr) vs merchant's per-merchant rows —
@@ -452,11 +524,10 @@ public class AnalyticsController {
         List<Integer> years = results.stream().map(Number::intValue).collect(Collectors.toList());
 
         // Ensure current year is always present
-        int currentYear = LocalDate.now().getYear();
         if (!years.contains(currentYear)) {
             years.add(0, currentYear); // Add to top if missing
         }
-        return ResponseEntity.ok(years);
+        return years;
     }
 
     /**
@@ -464,6 +535,7 @@ public class AnalyticsController {
      * Queries sum_daily_scheme grouped by card_scheme for a date range.
      */
     @PreAuthorize("@menuAccess.canAccess('/dashboard')")
+    @ReportResponse
     @PostMapping("/scheme-breakdown")
     public ResponseEntity<List<Map<String, Object>>> getSchemeBreakdown(
             @RequestBody Map<String, String> body) {
@@ -473,6 +545,13 @@ public class AnalyticsController {
         LocalDate startDate = body.get("startDate") != null ? LocalDate.parse(body.get("startDate")) : LocalDate.now().minusDays(30);
         LocalDate endDate = body.get("endDate") != null ? LocalDate.parse(body.get("endDate")) : LocalDate.now();
 
+        String key = "analyticsSchemeBreakdown:" + tenantId + ":" + startDate + ":" + endDate;
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> loadSchemeBreakdown(tenantId, startDate, endDate)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> loadSchemeBreakdown(Long tenantId, LocalDate startDate, LocalDate endDate) {
         String sql = """
             SELECT card_scheme, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume,
                    SUM(total_msf) as total_msf
@@ -498,6 +577,6 @@ public class AnalyticsController {
             map.put("total_msf", row[3]);
             result.add(map);
         }
-        return ResponseEntity.ok(result);
+        return result;
     }
 }

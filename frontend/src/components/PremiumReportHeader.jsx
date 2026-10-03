@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, Typography, Stack, Tooltip, Collapse, TextField } from '@mui/material';
+import { Box, Typography, Stack, Tooltip, Collapse, TextField } from './ui/system';
 import { Download, Filter, RefreshCw, ChevronDown } from 'lucide-react';
 import ActiveFilterChips from './ActiveFilterChips';
 

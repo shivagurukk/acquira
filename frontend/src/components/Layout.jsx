@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Drawer, Tooltip, useMediaQuery } from '@mui/material';
-import * as LucideIcons from 'lucide-react';
+import { Drawer, Tooltip, useMediaQuery } from './ui/system';
+import { Icons } from './sidebarIcons';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { prefetchRoute, prefetchCommonRoutes } from '../routePrefetch';
@@ -69,7 +69,7 @@ function loadCollapsed() {
 // Icons live in the sidebar ONLY (the collapsed rail depends on them):
 // one 18px stroke set at 1.5px.
 const NavItem = ({ menu, active, muted, onClick }) => {
-    const Icon = LucideIcons[menu.iconKey] || LucideIcons.Circle;
+    const Icon = Icons[menu.iconKey] || Icons.Circle;
     return (
         <button
             className={`sb__item${active ? ' sb__item--active' : ''}${muted ? ' sb__item--muted' : ''}`}
@@ -248,7 +248,7 @@ const Layout = () => {
     const renderCollapsedZone = (cats) => cats.flatMap(cat =>
         (grouped[cat] || []).map(m => {
             const active = location.pathname === m.path;
-            const MIcon = LucideIcons[m.iconKey] || LucideIcons.Circle;
+            const MIcon = Icons[m.iconKey] || Icons.Circle;
             return (
                 <Tooltip key={m.menuId || m.path} title={m.menuName} placement="right" arrow>
                     <button
@@ -295,7 +295,7 @@ const Layout = () => {
             {/* ── Search ── */}
             {(!collapsed || isMobile) && (
                 <div className="sb__search" onClick={() => searchRef.current?.focus()}>
-                    <LucideIcons.Search size={13} color="var(--rail-eyebrow)" />
+                    <Icons.Search size={13} color="var(--rail-eyebrow)" />
                     <input
                         ref={searchRef}
                         value={search}
@@ -305,7 +305,7 @@ const Layout = () => {
                     />
                     {search ? (
                         <button onClick={() => setSearch('')} aria-label="Clear search" style={{ display: 'flex', padding: 2, color: 'var(--rail-eyebrow)' }}>
-                            <LucideIcons.X size={11} />
+                            <Icons.X size={11} />
                         </button>
                     ) : (
                         <span className="sb__kbd">⌘K</span>
@@ -342,15 +342,15 @@ const Layout = () => {
                         {userMenu && (
                             <div className="sb__menu" role="menu">
                                 <button className="sb__menu-item" role="menuitem" onClick={() => { setUserMenu(false); navigate('/change-password'); }}>
-                                    <LucideIcons.KeyRound size={14} /> Change password
+                                    <Icons.KeyRound size={14} /> Change password
                                 </button>
                                 <button className="sb__menu-item" role="menuitem" onClick={() => { toggleTheme(); }}>
-                                    {isDark ? <LucideIcons.Sun size={14} /> : <LucideIcons.Moon size={14} />}
+                                    {isDark ? <Icons.Sun size={14} /> : <Icons.Moon size={14} />}
                                     {isDark ? 'Light mode' : 'Dark mode'}
                                 </button>
                                 <div className="sb__menu-sep" />
                                 <button className="sb__menu-item sb__menu-item--danger" role="menuitem" onClick={handleLogout}>
-                                    <LucideIcons.LogOut size={14} /> Sign out
+                                    <Icons.LogOut size={14} /> Sign out
                                 </button>
                             </div>
                         )}
@@ -365,12 +365,12 @@ const Layout = () => {
                                 <div className="sb__user-name">{username || 'User'}</div>
                                 <div className="sb__user-sub">{activeTenant?.bankName || 'Administrator'}</div>
                             </div>
-                            <LucideIcons.MoreHorizontal size={15} color="var(--rail-eyebrow)" />
+                            <Icons.MoreHorizontal size={15} color="var(--rail-eyebrow)" />
                         </button>
                         <DataFreshness />
                         {!isMobile && (
                             <button className="sb__collapse" onClick={() => setCollapsed(true)} aria-label="Collapse sidebar">
-                                <LucideIcons.PanelLeftClose size={18} strokeWidth={1.5} />
+                                <Icons.PanelLeftClose size={18} strokeWidth={1.5} />
                                 Collapse
                             </button>
                         )}
@@ -382,18 +382,18 @@ const Layout = () => {
                         </Tooltip>
                         <Tooltip title={isDark ? 'Light mode' : 'Dark mode'} placement="right" arrow>
                             <button className="sb__icon-item" aria-label="Toggle theme" onClick={toggleTheme}>
-                                {isDark ? <LucideIcons.Sun size={18} strokeWidth={1.5} /> : <LucideIcons.Moon size={18} strokeWidth={1.5} />}
+                                {isDark ? <Icons.Sun size={18} strokeWidth={1.5} /> : <Icons.Moon size={18} strokeWidth={1.5} />}
                             </button>
                         </Tooltip>
                         <Tooltip title="Sign out" placement="right" arrow>
                             <button className="sb__icon-item" aria-label="Sign out" onClick={handleLogout}>
-                                <LucideIcons.LogOut size={18} strokeWidth={1.5} />
+                                <Icons.LogOut size={18} strokeWidth={1.5} />
                             </button>
                         </Tooltip>
                         <DataFreshness collapsed />
                         <Tooltip title="Expand sidebar" placement="right" arrow>
                             <button className="sb__collapse" onClick={() => setCollapsed(false)} aria-label="Expand sidebar">
-                                <LucideIcons.PanelLeftOpen size={18} strokeWidth={1.5} />
+                                <Icons.PanelLeftOpen size={18} strokeWidth={1.5} />
                             </button>
                         </Tooltip>
                     </>
@@ -417,7 +417,7 @@ const Layout = () => {
             {isMobile && (
                 <button onClick={() => setMobileOpen(v => !v)}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}>
-                    <LucideIcons.Menu size={20} />
+                    <Icons.Menu size={20} />
                 </button>
             )}
 
@@ -479,7 +479,7 @@ const Layout = () => {
                     onClick={toggleTheme}
                     style={{ width: 28, height: 28, borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-secondary)' }}
                 >
-                    {isDark ? <LucideIcons.Sun size={14} /> : <LucideIcons.Moon size={14} />}
+                    {isDark ? <Icons.Sun size={14} /> : <Icons.Moon size={14} />}
                 </button>
                 {/* Keyboard shortcut hint */}
                 <button

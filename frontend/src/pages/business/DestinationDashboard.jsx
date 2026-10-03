@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Paper } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Paper } from '../../components/ui/system';
+import { DataGrid, GridToolbar } from '../../components/ui/system/DataGrid';
 import {
     ComposedChart, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
     ResponsiveContainer,

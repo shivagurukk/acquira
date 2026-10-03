@@ -14,14 +14,36 @@ import com.acquira.common.config.TenantContext;
 public class InsightController {
 
     private final JdbcTemplate jdbcTemplate;
+    private final com.acquira.common.service.ReportCache reportCache;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
-    public InsightController(JdbcTemplate jdbcTemplate) {
+    public InsightController(JdbcTemplate jdbcTemplate,
+                             com.acquira.common.service.ReportCache reportCache,
+                             tools.jackson.databind.ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
+        this.reportCache = reportCache;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/generate")
+    @com.acquira.common.config.ReportResponse
     public Map<String, Object> generateReport(@RequestBody InsightFilterRequest request, Authentication auth) {
         Long tenantId = getTenantId(auth);
+        String fk;
+        try {
+            fk = objectMapper.writeValueAsString(request);
+        } catch (tools.jackson.core.JacksonException e) {
+            fk = null;
+        }
+        if (fk == null) return buildReport(request, tenantId);
+        // Every non-CUSTOM preset is relative to CURRENT_DATE in SQL, so
+        // today's date is part of the key (a cached "today" can't roll over).
+        String key = "insightGenerate:" + tenantId + ":" + java.time.LocalDate.now() + ":" + fk;
+        return reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> buildReport(request, tenantId));
+    }
+
+    private Map<String, Object> buildReport(InsightFilterRequest request, Long tenantId) {
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
 

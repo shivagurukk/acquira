@@ -33,6 +33,7 @@ public class AdminController {
     private final com.acquira.core.service.PasswordService passwordService;
     private final com.acquira.core.service.RefreshTokenService refreshTokenService;
     private final com.acquira.core.service.TenantProvisioningService provisioningService;
+    private final com.acquira.common.service.ReportCache reportCache;
 
     public AdminController(TenantRepository tenantRepository, UserRepository userRepository,
             UserTenantAccessRepository userTenantAccessRepository, RoleRepository roleRepository,
@@ -42,7 +43,8 @@ public class AdminController {
             RefCountryRepository refCountryRepository,
             com.acquira.core.service.PasswordService passwordService,
             com.acquira.core.service.RefreshTokenService refreshTokenService,
-            com.acquira.core.service.TenantProvisioningService provisioningService) {
+            com.acquira.core.service.TenantProvisioningService provisioningService,
+            com.acquira.common.service.ReportCache reportCache) {
         this.tenantRepository = tenantRepository;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
@@ -55,6 +57,7 @@ public class AdminController {
         this.passwordService = passwordService;
         this.refreshTokenService = refreshTokenService;
         this.provisioningService = provisioningService;
+        this.reportCache = reportCache;
     }
 
     @GetMapping("/countries")
@@ -214,7 +217,10 @@ public class AdminController {
             setting.setValue(value);
             setting.setType("STRING");
         }
-        return ResponseEntity.ok(tenantSettingRepository.save(setting));
+        var saved = tenantSettingRepository.save(setting);
+        // Settings such as netspread.fx_enabled and currency shape cached reports.
+        reportCache.evict("tenant setting " + key, tenantId);
+        return ResponseEntity.ok(saved);
     }
 
     private boolean isSuperAdmin() {
@@ -279,7 +285,9 @@ public class AdminController {
         if (!canAccessTenant(tenantId)) return ResponseEntity.status(403).build();
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
         setting.setTenant(tenant);
-        return ResponseEntity.ok(tenantSettingRepository.save(setting));
+        var saved = tenantSettingRepository.save(setting);
+        reportCache.evict("tenant setting", tenantId);
+        return ResponseEntity.ok(saved);
     }
 
     @GetMapping("/tenants/{tenantId}/dashboard-config")

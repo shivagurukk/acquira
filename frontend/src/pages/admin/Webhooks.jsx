@@ -16,7 +16,7 @@ import {
  * An endpoint subscribes to event types; the backend POSTs a signed JSON
  * payload (HMAC-SHA256 over the raw body, X-Acquira-Signature header) with
  * automatic retries. The signing secret is generated server-side and shown
- * exactly once — same contract as API keys.
+ * exactly once.
  */
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -254,7 +254,7 @@ const Webhooks = () => {
     return (
         <Page
             title="Webhooks"
-            subtitle="Push signed event notifications (ingest runs, integration failures, expiring API keys) to your systems."
+            subtitle="Push signed event notifications (ingest runs, integration failures) to your systems."
             icon={Webhook}
             actions={
                 <Badge tone="success" dot>

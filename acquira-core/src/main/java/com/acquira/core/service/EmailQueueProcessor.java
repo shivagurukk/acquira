@@ -47,10 +47,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * These are compile-time constants by design — delivery rate is tied to the SES
  * quota and the pod's CPU limit, not to per-environment config.
  *
- * SINGLE INSTANCE ONLY: rows are selected, not claimed, so two replicas would
- * both pick up the same batch and deliver every email twice. acquira-core is
- * pinned to replicas: 1 for this reason (see deploy/k8s/05-core.yaml). Before
- * scaling out, this SELECT needs a FOR UPDATE SKIP LOCKED claim.
+ * MULTI-REPLICA: rows are selected, not claimed, so two replicas polling at
+ * once would both pick up the same batch and deliver every email twice. The
+ * @SchedulerLock on processQueue ("core-email-queue", ShedLock) makes one
+ * replica the sender for each pass; the lock is kept alive for the whole pass
+ * and freed within 10 minutes if that pod dies.
  *
  * SMTP RESOLUTION: the sender is built per row from {@code email_smtp_config}
  * (the active config for the row's tenant). The stored SMTP password is
@@ -74,7 +75,7 @@ public class EmailQueueProcessor {
      * Threads sending concurrently within a cycle. Pinned to 1: this pod shares
      * a 2-core limit with Chromium (PDF rendering) and the batch jobs, so extra
      * sender threads would take CPU from generation rather than add throughput.
-     * Raise only if the CPU limit in deploy/k8s/05-core.yaml goes up.
+     * Raise only if the CPU limit in deploy/k8s/base/05-core.yaml goes up.
      */
     private static final int CONCURRENCY = 1;
 
@@ -112,6 +113,7 @@ public class EmailQueueProcessor {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.acquira.common.service.TenantStatusService tenantStatusService;
 
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-email-queue", lockAtLeastFor = "PT5S")
     @Scheduled(fixedDelay = POLL_INTERVAL_MS)
     public void processQueue() {
         List<Map<String, Object>> pending;

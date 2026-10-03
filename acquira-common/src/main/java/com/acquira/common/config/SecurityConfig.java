@@ -60,8 +60,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/sso/**").permitAll()
-                        .requestMatchers("/api/external/**").permitAll()  // External API — uses X-API-Key auth
-                        .requestMatchers("/api/v1/**").permitAll()         // External Data API v1 — X-API-Key auth (ApiKeyAuthFilter)
+                        // Pod-to-pod calls (no user JWT). Each /internal controller
+                        // verifies X-Internal-Token itself (InternalAuth); the
+                        // ingress only routes /api, so these are cluster-internal.
+                        .requestMatchers("/internal/**").permitAll()
 
                         // Health probes (k8s liveness/readiness). Only health is
                         // exposed via management.endpoints; details are hidden.
@@ -128,7 +130,7 @@ public class SecurityConfig {
         config.setAllowedOrigins(origins);
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-Id", "X-API-Key"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-Id"));
         config.setExposedHeaders(List.of("Content-Disposition", "X-Correlation-Id", "Set-Cookie",
                 "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"));
         config.setAllowCredentials(true);

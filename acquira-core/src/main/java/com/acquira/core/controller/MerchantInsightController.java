@@ -1,6 +1,9 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.MerchantInsightsDTO;
+import com.acquira.common.service.ReportCache;
 import com.acquira.common.service.MerchantInsightService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
@@ -28,11 +31,14 @@ import java.util.stream.Stream;
 public class MerchantInsightController {
 
     private final MerchantInsightService insightService;
+    private final ReportCache reportCache;
 
-    public MerchantInsightController(MerchantInsightService insightService) {
+    public MerchantInsightController(MerchantInsightService insightService, ReportCache reportCache) {
         this.insightService = insightService;
+        this.reportCache = reportCache;
     }
 
+    @ReportResponse
     @GetMapping("/overview")
     public ResponseEntity<MerchantInsightsDTO> getInsights(
             @RequestParam(required = false) Long merchantId,
@@ -45,9 +51,16 @@ public class MerchantInsightController {
         Long tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
         YearMonth targetMonth = resolveTargetMonth(year, month);
+        final Long mid = merchantId;
+        // Keyed on the RESOLVED month (the default is "last month" from the
+        // clock). The ownership check runs inside the loader: a SecurityException
+        // escapes the supplier uncached, and a cached hit can only exist for a
+        // merchant that already passed the check for this same tenant.
+        String key = "merchantInsightStub:" + tenantId + ":" + mid + ":" + targetMonth;
         try {
-            return ResponseEntity.ok(insightService.getInsights(
-                    merchantId, targetMonth.getYear(), targetMonth.getMonthValue(), tenantId));
+            return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                    () -> insightService.getInsights(
+                            mid, targetMonth.getYear(), targetMonth.getMonthValue(), tenantId)));
         } catch (SecurityException se) {
             return ResponseEntity.status(403).build();
         }

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { clearAuthStorage } from '../utils/authStorage';
 import { showToast } from '../contexts/ToastContext';
 import { startLoading, stopLoading } from '../contexts/LoadingContext';
+import { installResponseCache } from './responseCache';
 
 const api = axios.create({
     baseURL: '/api',
@@ -11,6 +12,10 @@ const api = axios.create({
     // override per-request.
     timeout: 60000,
 });
+
+// Report responses (server-marked @ReportResponse) are kept in memory and
+// revalidated by ETag — see responseCache.js.
+installResponseCache(api);
 
 /**
  * Timeout for multipart uploads, which must cover the whole file transfer PLUS

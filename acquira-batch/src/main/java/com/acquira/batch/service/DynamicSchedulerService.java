@@ -35,6 +35,23 @@ public class DynamicSchedulerService {
     private final TaskScheduler taskScheduler;
 
     /**
+     * Every replica registers the same cron schedules, so each fire is guarded
+     * by a ShedLock row ("batch-schedule-&lt;id&gt;"): one replica starts the pull,
+     * the others skip that tick. Optional for directly constructed tests.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private net.javacrumbs.shedlock.core.LockProvider lockProvider;
+
+    /** Run {@code task} on at most one replica per cron tick. */
+    private void runOncePerTick(Long scheduleId, Runnable task) {
+        if (lockProvider == null) { task.run(); return; }
+        new net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor(lockProvider).executeWithLock(task,
+                new net.javacrumbs.shedlock.core.LockConfiguration(java.time.Instant.now(),
+                        "batch-schedule-" + scheduleId,
+                        java.time.Duration.ofMinutes(1), java.time.Duration.ofSeconds(50)));
+    }
+
+    /**
      * How many days back a SCHEDULED pull re-pulls, ending at "today" in the
      * schedule's own timezone.
      *
@@ -94,7 +111,7 @@ public class DynamicSchedulerService {
 
             CronTrigger trigger = new CronTrigger(schedule.getCronExpression(), tz);
 
-            ScheduledFuture<?> future = taskScheduler.schedule(() -> {
+            ScheduledFuture<?> future = taskScheduler.schedule(() -> runOncePerTick(schedule.getId(), () -> {
                 try {
                     // The window is computed HERE, at fire time, in the SAME zone the
                     // cron fired in. Computing it inside the pull service used the JVM
@@ -116,7 +133,7 @@ public class DynamicSchedulerService {
                 } catch (Exception e) {
                     log.error("[Scheduler] Error in scheduled pull for #{}: {}", schedule.getId(), e.getMessage(), e);
                 }
-            }, trigger);
+            }), trigger);
 
             activeTasks.put(schedule.getId(), future);
             log.info("[Scheduler] Registered schedule #{} — cron: '{}' tz: {} for report '{}'",

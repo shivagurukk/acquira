@@ -6,32 +6,51 @@
          
          Profiles:
            default (dev)  → colored console, DEBUG level
-           prod           → JSON file logging, INFO level, rotation
+           prod           → file logging, INFO level, rotation
+           json-logs      → (add-on, any of the above) console as JSON lines
+                            for central log aggregation
          ═══════════════════════════════════════════════════════════ -->
 
     <springProperty scope="context" name="APP_LOGS_DIR" source="app.logs.dir" defaultValue="logs"/>
+    <!-- Pod role (core|pdf|batch|all): one log file per pod and a [pod=..] tag on every line,
+         so the three pods can be read separately even when they share a logs volume. -->
+    <springProperty scope="context" name="ROLE" source="acquira.role" defaultValue="all"/>
 
     <!-- ─── DEV PROFILE: Pretty console output + plain file ─── -->
     <springProfile name="!prod">
+        <!-- Console. With the "json-logs" profile each line is one JSON object
+             (logstash layout + pod/cid/tenant/user fields) for a log collector —
+             Fluent Bit -> CloudWatch, or promtail -> Loki — to index. In k8s the
+             console IS the log: collectors read container stdout, not the files. -->
+        <springProfile name="json-logs">
+            <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+                <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+                    <format>logstash</format>
+                    <charset>UTF-8</charset>
+                </encoder>
+            </appender>
+        </springProfile>
+        <springProfile name="!json-logs">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) %magenta([%15.15thread]) %yellow([t=%X{tenantId:-·} %X{job:-·}/%X{step:-·}]) %cyan(%-36.36logger{35}) : %msg%n</pattern>
+                <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) %magenta([%15.15thread]) %yellow([pod=${ROLE} t=%X{tenantId:-·} %X{job:-·}/%X{step:-·}]) %cyan(%-36.36logger{35}) : %msg%n</pattern>
             </encoder>
         </appender>
+        </springProfile>
 
         <!-- DEV file appender so logs persist between runs and are easy to share/diff -->
         <appender name="DEV_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-            <file>${APP_LOGS_DIR}/core.log</file>
+            <file>${APP_LOGS_DIR}/acquira-${ROLE}.log</file>
             <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
                 <!-- Rolled files are NOT compressed (no .gz) so yesterday's log
                      can be opened/grepped/tailed directly without gunzip. -->
-                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                <fileNamePattern>${APP_LOGS_DIR}/acquira-${ROLE}.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
                 <maxFileSize>20MB</maxFileSize>
                 <maxHistory>7</maxHistory>
                 <totalSizeCap>200MB</totalSizeCap>
             </rollingPolicy>
             <encoder>
-                <pattern>%d{HH:mm:ss.SSS} %-5level [%15.15thread] [cid=%X{correlationId:-} t=%X{tenantId:-} %X{job:-}/%X{step:-}] %-36.36logger{35} : %msg%n</pattern>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%15.15thread] [pod=${ROLE} cid=%X{correlationId:-} t=%X{tenantId:-} %X{job:-}/%X{step:-}] %-36.36logger{35} : %msg%n</pattern>
             </encoder>
         </appender>
 
@@ -58,17 +77,17 @@
 
         <!-- Application log — structured JSON -->
         <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-            <file>${APP_LOGS_DIR}/core.log</file>
+            <file>${APP_LOGS_DIR}/acquira-${ROLE}.log</file>
             <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
                 <!-- Rolled files are NOT compressed (no .gz) so they can be
                      opened/grepped/tailed directly without gunzip. -->
-                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                <fileNamePattern>${APP_LOGS_DIR}/acquira-${ROLE}.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
                 <maxFileSize>50MB</maxFileSize>
                 <maxHistory>30</maxHistory>
                 <totalSizeCap>2GB</totalSizeCap>
             </rollingPolicy>
             <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n</pattern>
+                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [pod=${ROLE}] [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n</pattern>
             </encoder>
         </appender>
 
@@ -101,16 +120,30 @@
                 <totalSizeCap>1GB</totalSizeCap>
             </rollingPolicy>
             <encoder>
-                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n%ex</pattern>
+                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [pod=${ROLE}] [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n%ex</pattern>
             </encoder>
         </appender>
 
+        <!-- Console. With the "json-logs" profile each line is one JSON object
+             (logstash layout + pod/cid/tenant/user fields) for a log collector —
+             Fluent Bit -> CloudWatch, or promtail -> Loki — to index. In k8s the
+             console IS the log: collectors read container stdout, not the files. -->
+        <springProfile name="json-logs">
+            <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+                <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+                    <format>logstash</format>
+                    <charset>UTF-8</charset>
+                </encoder>
+            </appender>
+        </springProfile>
+        <springProfile name="!json-logs">
         <!-- Console in prod — minimal, for systemd journal -->
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{HH:mm:ss} %-5level [%X{correlationId:-}] [t=%X{tenantId:-} %X{job:-}/%X{step:-}] %logger{20} - %msg%n</pattern>
+                <pattern>%d{HH:mm:ss} %-5level [pod=${ROLE}] [%X{correlationId:-}] [t=%X{tenantId:-} %X{job:-}/%X{step:-}] %logger{20} - %msg%n</pattern>
             </encoder>
         </appender>
+        </springProfile>
 
         <!-- Audit logger — routes to separate audit file -->
         <logger name="AUDIT" level="INFO" additivity="false">

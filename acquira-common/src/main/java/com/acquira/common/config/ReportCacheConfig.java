@@ -21,9 +21,12 @@ import java.util.concurrent.TimeUnit;
  * path clears the caches on completion — the ingest jobs via
  * CacheEvictionJobListener (transaction + merchant master + db-pull), and the
  * non-job writers (BulkMigrationService, BackfillIngestionService) via their
- * own evictReportCaches(). Post-ingest staleness is therefore bounded by
- * seconds; the TTL is only the backstop for out-of-band writes (manual SQL),
- * which is why it can safely be hours rather than minutes.
+ * own evictReportCaches(). All of them go through ReportCache.evictAll, which
+ * clears this JVM and signals every other instance through ReportCacheSync
+ * (report_cache_version), so the contract holds when batch, pdf and core run
+ * as separate pods. Post-ingest staleness is therefore bounded by seconds (the
+ * sync poll interval); the TTL is only the backstop for out-of-band writes
+ * (manual SQL), which is why it can safely be hours rather than minutes.
  *
  * SIZING: entry counts are deliberately small because report payloads are
  * large (multi-MB JSON per the gzip note in application.properties). The caps
@@ -53,12 +56,10 @@ public class ReportCacheConfig {
      * evicts on completion — see the freshness contract above. Drop it back
      * down (e.g. 10) if a new write path is added before its eviction is.
      *
-     * DEPLOYMENT DEPENDENCY: that contract holds only while ONE JVM serves web
-     * AND runs the batch jobs (replicas: 1 in deploy/k8s/05-core.yaml). The
-     * planned web/worker pod split breaks it — the eviction fires in the worker
-     * JVM while web replicas keep serving stale data for the full TTL. Before
-     * that split lands, either drop this back to ~10 or move the cache to a
-     * shared backend (Redis) / add a cross-pod eviction signal.
+     * DEPLOYMENT DEPENDENCY: across pods the contract relies on the
+     * report_cache_version table (migration V2026_10_03_01). Without it
+     * ReportCacheSync logs a warning and evictions stay local to the JVM that
+     * made them — fine for one pod, stale for the full TTL in a split one.
      */
     private static final long TTL_MINUTES = 360;
 
@@ -79,7 +80,16 @@ public class ReportCacheConfig {
 
     @Bean
     public CacheManager cacheManager() {
-        CaffeineCacheManager manager = new CaffeineCacheManager();
+        // Every cache is a TenantScopedCache: entries are filed under the
+        // writing thread's tenant scope so ReportCache.evict(reason, tenantId)
+        // can drop one tenant without cold-starting the others.
+        CaffeineCacheManager manager = new CaffeineCacheManager() {
+            @Override
+            protected org.springframework.cache.Cache adaptCaffeineCache(
+                    String name, com.github.benmanes.caffeine.cache.Cache<Object, Object> cache) {
+                return new TenantScopedCache(name, cache, isAllowNullValues());
+            }
+        };
         // setCacheNames BEFORE registerCustomCache: it sets dynamic=false, so a
         // typo'd cache name in a future @Cacheable gets null (a loud no-op)
         // instead of silently creating an UNBOUNDED, never-expiring cache that

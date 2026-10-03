@@ -6,10 +6,10 @@ import com.acquira.common.ingest.IngestRunRecorder;
 import com.acquira.common.ingest.IngestSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobExecutionListener;
-import org.springframework.batch.item.ExecutionContext;
-import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.listener.JobExecutionListener;
+import org.springframework.batch.infrastructure.item.ExecutionContext;
+import com.acquira.common.event.EventOutbox;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -44,14 +44,14 @@ public class IngestRunJobListener implements JobExecutionListener {
     private final IngestRunRecorder recorder;
     private final IngestReconciliationService reconciliation;
     private final JdbcTemplate jdbc;
-    private final ApplicationEventPublisher eventPublisher;
+    private final EventOutbox eventOutbox;
 
     public IngestRunJobListener(IngestRunRecorder recorder, IngestReconciliationService reconciliation,
-                                JdbcTemplate jdbc, ApplicationEventPublisher eventPublisher) {
+                                JdbcTemplate jdbc, EventOutbox eventOutbox) {
         this.recorder = recorder;
         this.reconciliation = reconciliation;
         this.jdbc = jdbc;
-        this.eventPublisher = eventPublisher;
+        this.eventOutbox = eventOutbox;
     }
 
     @Override
@@ -128,14 +128,15 @@ public class IngestRunJobListener implements JobExecutionListener {
 
             // Webhook seam: core fans this out to the tenant's subscribed
             // endpoints. Publish AFTER closeRun so a subscriber querying the
-            // ledger on receipt sees the final row.
+            // ledger on receipt sees the final row. Via the outbox, not a
+            // Spring event: the listener lives in core, which may be another pod.
             try {
                 Long tenantId = jobExecution.getJobParameters().getLong("tenantId");
                 String fullPath = jobExecution.getJobParameters().getString("fullPath");
                 String fileName = fullPath == null ? null
                         : fullPath.substring(Math.max(fullPath.lastIndexOf('/'), fullPath.lastIndexOf('\\')) + 1);
                 String sourceRaw = jobExecution.getJobParameters().getString("ingestSource");
-                eventPublisher.publishEvent(new IngestRunFinishedEvent(
+                eventOutbox.publish(tenantId, new IngestRunFinishedEvent(
                         tenantId, runId, jobExecution.getJobInstance().getJobName(), fileName,
                         sourceRaw, jobExecution.getStatus().toString(),
                         failure == null ? null : failure.getMessage()));

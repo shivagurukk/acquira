@@ -2,9 +2,9 @@ package com.acquira.batch.service;
 import com.acquira.common.service.AuditService;
 
 import com.acquira.common.config.TenantContext;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.job.Job;
+import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -48,7 +48,7 @@ public class FileUploadService {
     private final Job rentalLoadJob;
     private final Job dccLoadJob;
     private final Job reportingOnlyJob;
-    private final org.springframework.batch.core.explore.JobExplorer jobExplorer;
+    private final org.springframework.batch.core.repository.explore.JobExplorer jobExplorer;
 
     private final String UPLOAD_DIR = "data/uploads/";
 
@@ -101,7 +101,7 @@ public class FileUploadService {
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantRepository tenantRepository,
             com.acquira.batch.service.ManualIngestionService manualIngestionService,
-            org.springframework.batch.core.explore.JobExplorer jobExplorer,
+            org.springframework.batch.core.repository.explore.JobExplorer jobExplorer,
             com.acquira.common.repository.TenantSettingRepository tenantSettingRepository) {
         this.jobLauncher = jobLauncher;
         this.merchantMasterJob = merchantMasterJob;
@@ -558,7 +558,7 @@ public class FileUploadService {
         return resolveTargetTenantFromEntityId(scanFileOnce(filePath).entityId);
     }
 
-    public org.springframework.batch.core.JobExecution processUnifiedFile(MultipartFile file) throws Exception {
+    public org.springframework.batch.core.job.JobExecution processUnifiedFile(MultipartFile file) throws Exception {
         long t0 = System.currentTimeMillis();
         // Save File FIRST so we can read it
         String filePath = saveFile(file);
@@ -596,7 +596,7 @@ public class FileUploadService {
                         .addString("triggeredBy", currentUsername())
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
-                org.springframework.batch.core.JobExecution execution = jobLauncher.run(merchantMasterJob, jobParameters);
+                org.springframework.batch.core.job.JobExecution execution = jobLauncher.run(merchantMasterJob, jobParameters);
 
                 // ASYNC NOTE: with the async JobLauncher, we cannot delete the temp file here —
                 // the batch job has only just been queued; reading the file happens later on a
@@ -622,7 +622,7 @@ public class FileUploadService {
                         .addString("triggeredBy", currentUsername())
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
-                org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
+                org.springframework.batch.core.job.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
 
                 // PERF FIX: Trigger Reporting Update ASYNCHRONOUSLY.
                 //
@@ -641,7 +641,7 @@ public class FileUploadService {
                 // inside the async lambda.
                 final Long asyncTenantId = targetTenantId;
                 final String asyncEntityName = entityName;
-                final org.springframework.batch.core.JobExecution asyncExecution = execution;
+                final org.springframework.batch.core.job.JobExecution asyncExecution = execution;
                 java.util.concurrent.CompletableFuture.runAsync(() -> {
                     try {
                         // Wait for the (async-launched) load to finish before
@@ -651,7 +651,7 @@ public class FileUploadService {
                         // re-aggregate the tenant's entire history (the dominant
                         // cost that grew with retention). Empty scope -> the
                         // unscoped fallback inside ManualIngestionService.
-                        org.springframework.batch.core.JobExecution done = waitForJob(asyncExecution);
+                        org.springframework.batch.core.job.JobExecution done = waitForJob(asyncExecution);
                         if (!"COMPLETED".equals(String.valueOf(done != null ? done.getStatus() : null))) {
                             log.warn("[async] Skipping reporting for tenant {} ({}) — load ended {}",
                                 asyncEntityName, asyncTenantId, done != null ? done.getStatus() : "UNKNOWN");
@@ -721,11 +721,11 @@ public class FileUploadService {
     }
 
     // Kept for backward compatibility
-    public org.springframework.batch.core.JobExecution processMerchantFile(MultipartFile file) throws Exception {
+    public org.springframework.batch.core.job.JobExecution processMerchantFile(MultipartFile file) throws Exception {
         return processUnifiedFile(file);
     }
 
-    public org.springframework.batch.core.JobExecution processTransactionFile(MultipartFile file, String paymentDate)
+    public org.springframework.batch.core.job.JobExecution processTransactionFile(MultipartFile file, String paymentDate)
             throws Exception {
         return processUnifiedFile(file);
     }
@@ -895,7 +895,7 @@ public class FileUploadService {
             for (Long tenantId : processedTenants) {
                 try {
                     long t = System.currentTimeMillis();
-                    org.springframework.batch.core.JobExecution repExec = jobLauncher.run(reportingOnlyJob,
+                    org.springframework.batch.core.job.JobExecution repExec = jobLauncher.run(reportingOnlyJob,
                         new JobParametersBuilder()
                             .addLong("tenantId", tenantId)
                             .addString("triggeredBy", currentUsername())
@@ -1225,13 +1225,13 @@ public class FileUploadService {
      * request forever; on timeout we return the last-known execution and the
      * caller records it as FAILED (the job itself keeps running in the background).
      */
-    private org.springframework.batch.core.JobExecution waitForJob(
-            org.springframework.batch.core.JobExecution execution) {
+    private org.springframework.batch.core.job.JobExecution waitForJob(
+            org.springframework.batch.core.job.JobExecution execution) {
         if (execution == null) return null;
         final long TIMEOUT_MS = 6L * 60L * 60L * 1000L; // 6h ceiling per file
         long start = System.currentTimeMillis();
         Long id = execution.getId();
-        org.springframework.batch.core.JobExecution latest = execution;
+        org.springframework.batch.core.job.JobExecution latest = execution;
         while (!isTerminal(latest)) {
             if (System.currentTimeMillis() - start > TIMEOUT_MS) {
                 log.warn("waitForJob: timeout after {} ms waiting for job {} (status {}); job continues in background",
@@ -1251,7 +1251,7 @@ public class FileUploadService {
                 break;
             }
             if (id != null && jobExplorer != null) {
-                org.springframework.batch.core.JobExecution refreshed = jobExplorer.getJobExecution(id);
+                org.springframework.batch.core.job.JobExecution refreshed = jobExplorer.getJobExecution(id);
                 if (refreshed != null) latest = refreshed;
             }
         }
@@ -1268,7 +1268,7 @@ public class FileUploadService {
      * callers then fall back to the unscoped, whole-history reporting path.
      */
     private java.util.List<java.time.LocalDate> loadedDatesOf(
-            org.springframework.batch.core.JobExecution execution) {
+            org.springframework.batch.core.job.JobExecution execution) {
         if (execution == null) return java.util.List.of();
         try {
             Object csv = execution.getExecutionContext().get("dq.loadedDates");
@@ -1293,7 +1293,7 @@ public class FileUploadService {
     }
 
     /** True once a JobExecution is in a terminal (no longer running) state. */
-    private boolean isTerminal(org.springframework.batch.core.JobExecution ex) {
+    private boolean isTerminal(org.springframework.batch.core.job.JobExecution ex) {
         if (ex == null) return true;
         org.springframework.batch.core.BatchStatus st = ex.getStatus();
         return st == org.springframework.batch.core.BatchStatus.COMPLETED
@@ -1371,7 +1371,7 @@ public class FileUploadService {
             }
             JobParameters jobParameters = paramsBuilder.toJobParameters();
 
-            org.springframework.batch.core.JobExecution execution;
+            org.springframework.batch.core.job.JobExecution execution;
             if ("MERCHANT".equals(fileType)) {
                 execution = jobLauncher.run(merchantMasterJob, jobParameters);
             } else if ("RENTAL".equals(fileType)) {

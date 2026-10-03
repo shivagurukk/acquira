@@ -4,7 +4,7 @@ import {
     Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Checkbox,
     FormControlLabel, Collapse, InputAdornment, LinearProgress, Fade, Stack,
     Paper, Card, CardContent, Divider, Chip, Badge, Avatar, Menu, MenuItem
-} from '@mui/material';
+} from '../../components/ui/system';
 import {
     Compass, BarChart3, Table2, PieChart, TrendingUp,
     Save, X, Play, Download, ChevronDown, ChevronRight, Search,
@@ -27,7 +27,8 @@ import { explorerApi, reportApi, savedViewsApi } from '../../api/explorer';
 import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
 import { resolveDecimals, getDefaultCurrency } from '../../utils/formatters';
-import RGL, { WidthProvider } from 'react-grid-layout';
+// v2 moved the v1 flat-props API (WidthProvider HOC) to the /legacy entry.
+import RGL, { WidthProvider } from 'react-grid-layout/legacy';
 
 const SheetGrid = WidthProvider(RGL);
 

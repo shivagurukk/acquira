@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip as MuiTooltip } from '@mui/material';
-import { DataGrid } from '@mui/x-data-grid';
+import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip as MuiTooltip } from '../../components/ui/system';
+import { DataGrid } from '../../components/ui/system/DataGrid';
 import { TrendingUp, Target, DollarSign, Hash, CalendarClock, Info, Gauge, AlertTriangle, TrendingDown, Users, Award } from 'lucide-react';
 import {
     ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip,

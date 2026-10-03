@@ -1,8 +1,8 @@
 package com.acquira.batch.controller;
 
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.explore.JobExplorer;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.step.StepExecution;
+import org.springframework.batch.core.repository.explore.JobExplorer;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -430,7 +430,7 @@ public class BatchProgressController {
         // Data-quality summary (written by stagingToFactTasklet into the job context).
         // Surfaced so the upload UI can show a post-upload banner.
         try {
-            org.springframework.batch.item.ExecutionContext ctx = jobExec.getExecutionContext();
+            org.springframework.batch.infrastructure.item.ExecutionContext ctx = jobExec.getExecutionContext();
             if (ctx.containsKey("dq.total")) {
                 Map<String, Object> dq = new HashMap<>();
                 int dqTotal = ctx.getInt("dq.total", 0);
@@ -452,7 +452,7 @@ public class BatchProgressController {
         // whose agent could not be applied — conflicting duplicates — or that named
         // an agent code the tenant has never seen.
         try {
-            org.springframework.batch.item.ExecutionContext ctx = jobExec.getExecutionContext();
+            org.springframework.batch.infrastructure.item.ExecutionContext ctx = jobExec.getExecutionContext();
             if (ctx.containsKey("reassign.count")) {
                 Map<String, Object> ra = new HashMap<>();
                 ra.put("reassigned", ctx.getInt("reassign.count", 0));

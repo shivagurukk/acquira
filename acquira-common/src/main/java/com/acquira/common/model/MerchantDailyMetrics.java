@@ -34,6 +34,9 @@ public class MerchantDailyMetrics {
     // --- Core Volume Metrics ---
     private Double todayVolume = 0.0;
     private Double yesterdayVolume = 0.0;
+    // Explicit name: the column is "avg7day". Boot 4's naming strategy splits
+    // after the digit (avg7_day), which Boot 3 did not.
+    @Column(name = "avg7day")
     private Double avg7Day = 0.0;
     private Double totalMtd = 0.0;
 

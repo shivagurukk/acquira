@@ -65,6 +65,7 @@ public class ChurnRetrainScheduler {
      * Weekly retrain — Saturday 21:00 server-local. Cron overridable via
      * acquira.ml.churn.retrain-cron.
      */
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "batch-churn-retrain", lockAtLeastFor = "PT1M")
     @Scheduled(cron = "${acquira.ml.churn.retrain-cron:0 0 21 * * SAT}")
     public void weeklyRetrain() {
         if (!enabled) {

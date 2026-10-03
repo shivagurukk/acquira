@@ -5,12 +5,16 @@
     <meta charset="UTF-8">
     <title th:text="|${merchantName} - AFS Nexus Report|">AFS Nexus Report</title>
     <style>
+        /* Weight RANGES on the heaviest faces: a weight with no face of its own
+           (Inter 800-900, Playfair 500/600/800/900) must map to a shipped one —
+           if it fell through to a system font instead, Chromium embeds that
+           font too and pdf() doubles. */
         @font-face { font-family: 'Inter'; font-weight: 400; src: url('/assets/fonts/Inter-Regular.ttf') format('truetype'); }
         @font-face { font-family: 'Inter'; font-weight: 500; src: url('/assets/fonts/Inter-Medium.ttf') format('truetype'); }
         @font-face { font-family: 'Inter'; font-weight: 600; src: url('/assets/fonts/Inter-SemiBold.ttf') format('truetype'); }
-        @font-face { font-family: 'Inter'; font-weight: 700; src: url('/assets/fonts/Inter-Bold.ttf') format('truetype'); }
-        @font-face { font-family: 'Playfair Display'; font-weight: 400; src: url('/assets/fonts/PlayfairDisplay-Regular.ttf') format('truetype'); }
-        @font-face { font-family: 'Playfair Display'; font-weight: 700; src: url('/assets/fonts/PlayfairDisplay-Bold.ttf') format('truetype'); }
+        @font-face { font-family: 'Inter'; font-weight: 700 900; src: url('/assets/fonts/Inter-Bold.ttf') format('truetype'); }
+        @font-face { font-family: 'Playfair Display'; font-weight: 400 500; src: url('/assets/fonts/PlayfairDisplay-Regular.ttf') format('truetype'); }
+        @font-face { font-family: 'Playfair Display'; font-weight: 600 900; src: url('/assets/fonts/PlayfairDisplay-Bold.ttf') format('truetype'); }
     </style>
     <link rel="stylesheet" href="/assets/report-theme.css" />
     <script src="/assets/js/chart.js"></script>

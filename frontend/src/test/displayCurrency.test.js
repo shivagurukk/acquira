@@ -98,7 +98,7 @@ describe('USD mode converts, relabels and renders 2dp', () => {
     });
 
     it('helpers expose the raw conversion for CSV builders', () => {
-        expect(convertForDisplay(100)).toBeCloseTo(265.252, 6);
+        expect(convertForDisplay(100)).toBeCloseTo(100 * BHD_RATE, 6);
         expect(displayCurrencyCode('BHD')).toBe('USD');
         expect(isUsdDisplay('BHD')).toBe(true);
         const fx = usdRateInfo('BHD');

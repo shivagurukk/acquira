@@ -4,6 +4,8 @@ import com.acquira.common.repository.*;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.model.SumDailyBank;
 import com.acquira.common.config.TenantContext;
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.data.domain.Page;
@@ -39,6 +41,10 @@ public class FinanceController {
     private final CurrencyMeta currencyMeta;
     /** Pivot + fee-overlay assembly and the report cache for GET /summary. */
     private final com.acquira.core.service.FinanceSummaryService financeSummaryService;
+    /** Report cache for the dashboard / profitability reads (evicted per tenant on ingest). */
+    private final com.acquira.common.service.ReportCache reportCache;
+    /** Serializes the filter body into the cache key. */
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -52,7 +58,9 @@ public class FinanceController {
             VolumeRevenueRepository volumeRevenueRepository,
             com.acquira.core.service.TenantService tenantService,
             CurrencyMeta currencyMeta,
-            com.acquira.core.service.FinanceSummaryService financeSummaryService) {
+            com.acquira.core.service.FinanceSummaryService financeSummaryService,
+            com.acquira.common.service.ReportCache reportCache,
+            tools.jackson.databind.ObjectMapper objectMapper) {
         this.bankRepository = bankRepository;
         this.monthlyBankRepository = monthlyBankRepository;
         this.merchantRepository = merchantRepository;
@@ -63,6 +71,22 @@ public class FinanceController {
         this.tenantService = tenantService;
         this.currencyMeta = currencyMeta;
         this.financeSummaryService = financeSummaryService;
+        this.reportCache = reportCache;
+        this.objectMapper = objectMapper;
+    }
+
+    /** Filter body as a cache-key fragment; null (= don't cache) if it can't be serialized. */
+    private String filterKey(VolumeRevenueFilterDTO filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
+    }
+
+    /** Pageable as a cache-key fragment (page, size and sort all change the result). */
+    private static String pageKey(Pageable p) {
+        return p.isPaged() ? p.getPageNumber() + ":" + p.getPageSize() + ":" + p.getSort() : "unpaged";
     }
 
     /**
@@ -85,6 +109,9 @@ public class FinanceController {
     }
 
     // ── Finance Summary (drill-down: Month → Day → Merchant) ──────────────
+    // Not wrapped in reportCache: FinanceSummaryService.getSummary is already
+    // @Cacheable on CACHE_REPORT_DATA, and nesting would recurse into that cache.
+    @ReportResponse
     @GetMapping("/summary")
     public ResponseEntity<?> getFinanceSummary(
             @RequestParam(defaultValue = "MONTH") String period,
@@ -152,14 +179,31 @@ public class FinanceController {
     }
 
     // ── A) Dashboard KPIs ────────────────────────────────────────────────
+    @ReportResponse
     @GetMapping("/dashboard/kpis")
     public ResponseEntity<Map<String, Object>> getDashboardKpis(
             @RequestParam(required = false) LocalDate from,
             @RequestParam(required = false) LocalDate to) {
 
         Long tenantId = resolveTenantId();
-        LocalDate end = (to != null) ? to : LocalDate.now();
+        LocalDate now = LocalDate.now();
+        LocalDate end = (to != null) ? to : now;
         LocalDate start = (from != null) ? from : end.withDayOfMonth(1); // Default MTD
+
+        Map<String, Object> body;
+        if (tenantId == null) {
+            body = computeDashboardKpis(null, now, start, end);
+        } else {
+            // `now` is in the key: the Daily/MTD/YTD tiles are anchored on it.
+            String key = "financeKpis:" + tenantId + ":" + now + ":" + start + ":" + end;
+            body = reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                    () -> computeDashboardKpis(tenantId, now, start, end));
+        }
+        // Copy before stamping the currency so the cached map is never mutated.
+        return ResponseEntity.ok(currencyMeta.attach(new HashMap<>(body), tenantId));
+    }
+
+    private Map<String, Object> computeDashboardKpis(Long tenantId, LocalDate now, LocalDate start, LocalDate end) {
         // 1. Daily (For specific "Today" tile, regardless of filter, or should it be
         // last day of filter?)
         // Spec says "Daily Tile". Let's show Today's data always for "Daily" tile
@@ -177,8 +221,6 @@ public class FinanceController {
         // Let's stick to the previous robust implementation for Daily/MTD/YTD tiles
         // (always calculated from NOW),
         // and use the Filter Dates for the "Filtered Metrics" (Revenue, Costs, Margin).
-
-        LocalDate now = LocalDate.now();
 
         // Fixed Buckets
         var dailyRecs = bankRepository.findByTenantIdAndBusinessDateBetween(tenantId, now, now);
@@ -212,7 +254,7 @@ public class FinanceController {
         }
         response.put("marginPct", marginPct);
 
-        return ResponseEntity.ok(currencyMeta.attach(response, resolveTenantId()));
+        return response;
     }
 
     /**
@@ -235,16 +277,33 @@ public class FinanceController {
      * range only narrows the cost-analysis (msf / interchange / scheme / margin)
      * tiles — again matching the GET behaviour.
      */
+    @ReportResponse
     @PostMapping("/dashboard/kpis-filtered")
     public ResponseEntity<Map<String, Object>> getDashboardKpisFiltered(
-            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+            @RequestBody(required = false) VolumeRevenueFilterDTO body) {
 
         Long tenantId = resolveTenantId();
-        if (filter == null) filter = new VolumeRevenueFilterDTO();
+        final VolumeRevenueFilterDTO filter = (body != null) ? body : new VolumeRevenueFilterDTO();
 
         LocalDate now = LocalDate.now();
         LocalDate end = (filter.getEndDate() != null) ? filter.getEndDate() : now;
         LocalDate start = (filter.getStartDate() != null) ? filter.getStartDate() : end.withDayOfMonth(1);
+
+        String fk = (tenantId == null) ? null : filterKey(filter);
+        Map<String, Object> response;
+        if (fk == null) {
+            response = computeDashboardKpisFiltered(tenantId, now, start, end, filter);
+        } else {
+            String key = "financeKpisFiltered:" + tenantId + ":" + now + ":" + start + ":" + end + ":" + fk;
+            response = reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                    () -> computeDashboardKpisFiltered(tenantId, now, start, end, filter));
+        }
+        // Copy before stamping the currency so the cached map is never mutated.
+        return ResponseEntity.ok(currencyMeta.attach(new HashMap<>(response), tenantId));
+    }
+
+    private Map<String, Object> computeDashboardKpisFiltered(Long tenantId, LocalDate now,
+            LocalDate start, LocalDate end, VolumeRevenueFilterDTO filter) {
 
         // Fixed buckets are always anchored on `now` regardless of filter date
         // range. This matches the GET endpoint's behaviour.
@@ -284,7 +343,7 @@ public class FinanceController {
         }
         response.put("marginPct", marginPct);
 
-        return ResponseEntity.ok(currencyMeta.attach(response, resolveTenantId()));
+        return response;
     }
 
     /**
@@ -382,16 +441,27 @@ public class FinanceController {
      * Aggregates day-by-day from sum_daily_insight. For ranges > 45 days we
      * group by month to keep the chart readable.
      */
+    @ReportResponse
     @PostMapping("/dashboard/trends-filtered")
     public ResponseEntity<List<Map<String, Object>>> getTrendsFiltered(
             @RequestParam(required = false) String mode,
-            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+            @RequestBody(required = false) VolumeRevenueFilterDTO body) {
 
         Long tenantId = resolveTenantId();
-        if (filter == null) filter = new VolumeRevenueFilterDTO();
+        final VolumeRevenueFilterDTO filter = (body != null) ? body : new VolumeRevenueFilterDTO();
 
         LocalDate end = (filter.getEndDate() != null) ? filter.getEndDate() : LocalDate.now();
         LocalDate start = (filter.getStartDate() != null) ? filter.getStartDate() : end.withDayOfMonth(1);
+
+        String fk = (tenantId == null) ? null : filterKey(filter);
+        if (fk == null) return ResponseEntity.ok(computeTrendsFiltered(tenantId, mode, start, end, filter));
+        String key = "financeTrendsFiltered:" + tenantId + ":" + mode + ":" + start + ":" + end + ":" + fk;
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> computeTrendsFiltered(tenantId, mode, start, end, filter)));
+    }
+
+    private List<Map<String, Object>> computeTrendsFiltered(Long tenantId, String mode,
+            LocalDate start, LocalDate end, VolumeRevenueFilterDTO filter) {
 
         boolean useMonthly = java.time.temporal.ChronoUnit.DAYS.between(start, end) > 45
                 || "YTD".equalsIgnoreCase(mode);
@@ -478,7 +548,7 @@ public class FinanceController {
             point.put("marginPct",  margin);
             response.add(point);
         }
-        return ResponseEntity.ok(response);
+        return response;
     }
 
     private <T> BigDecimal sum(List<T> list, java.util.function.Function<T, BigDecimal> mapper) {
@@ -486,6 +556,7 @@ public class FinanceController {
     }
 
     // C) Revenue & Margin Trends
+    @ReportResponse
     @GetMapping("/dashboard/trends/{mode}")
     public ResponseEntity<List<Map<String, Object>>> getTrends(
             @PathVariable String mode, // MTD or ignored if from/to present?
@@ -494,9 +565,17 @@ public class FinanceController {
 
         Long tenantId = resolveTenantId();
 
-        List<Map<String, Object>> response = new ArrayList<>();
         LocalDate end = (to != null) ? to : LocalDate.now();
         LocalDate start = (from != null) ? from : end.withDayOfMonth(1);
+
+        if (tenantId == null) return ResponseEntity.ok(computeTrends(null, mode, start, end));
+        String key = "financeTrends:" + tenantId + ":" + mode + ":" + start + ":" + end;
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> computeTrends(tenantId, mode, start, end)));
+    }
+
+    private List<Map<String, Object>> computeTrends(Long tenantId, String mode, LocalDate start, LocalDate end) {
+        List<Map<String, Object>> response = new ArrayList<>();
 
         long days = java.time.temporal.ChronoUnit.DAYS.between(start, end);
         boolean useMonthly = days > 45; // Switch to Monthly aggregation if range is large
@@ -578,7 +657,7 @@ public class FinanceController {
                 response.add(point);
             }
         }
-        return ResponseEntity.ok(response);
+        return response;
     }
 
     @GetMapping("/export/profitability")
@@ -669,6 +748,7 @@ public class FinanceController {
     }
 
     // D) Profitability Breakdown
+    @ReportResponse
     @GetMapping("/profitability")
     public ResponseEntity<Page<Map<String, Object>>> getProfitability(
             @RequestParam String groupBy, // merchant, mcc, scheme, channel
@@ -678,11 +758,19 @@ public class FinanceController {
 
         Long tenantId = resolveTenantId();
 
-        if (from == null)
-            from = LocalDate.now().minusDays(30);
-        if (to == null)
-            to = LocalDate.now();
+        final LocalDate fromD = (from != null) ? from : LocalDate.now().minusDays(30);
+        final LocalDate toD = (to != null) ? to : LocalDate.now();
 
+        if (tenantId == null) return ResponseEntity.ok(computeProfitability(null, groupBy, fromD, toD, pageable));
+        // An invalid groupBy throws inside the supplier and propagates (never cached).
+        String key = "financeProfitability:" + tenantId + ":" + groupBy.toLowerCase() + ":" + fromD + ":" + toD
+                + ":" + pageKey(pageable);
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> computeProfitability(tenantId, groupBy, fromD, toD, pageable)));
+    }
+
+    private Page<Map<String, Object>> computeProfitability(Long tenantId, String groupBy,
+            LocalDate from, LocalDate to, Pageable pageable) {
         Page<Map<String, Object>> result;
         switch (groupBy.toLowerCase()) {
             case "merchant":
@@ -711,23 +799,27 @@ public class FinanceController {
         // For simplicity, let the frontend calculate Margin % = (NetRev / Volume) *
         // 100.
 
-        return ResponseEntity.ok(result);
+        return result;
     }
 
     // E) Special Lists
+    @ReportResponse
     @GetMapping("/loss-making-merchants")
     public ResponseEntity<Page<Map<String, Object>>> getLossMaking(
             @RequestParam(required = false) LocalDate from,
             @RequestParam(required = false) LocalDate to,
             Pageable pageable) {
         Long tenantId = resolveTenantId();
-        if (from == null)
-            from = LocalDate.now().minusDays(30);
-        if (to == null)
-            to = LocalDate.now();
-        return ResponseEntity.ok(merchantRepository.findLossMakingMerchants(tenantId, from, to, pageable));
+        final LocalDate fromD = (from != null) ? from : LocalDate.now().minusDays(30);
+        final LocalDate toD = (to != null) ? to : LocalDate.now();
+        if (tenantId == null)
+            return ResponseEntity.ok(merchantRepository.findLossMakingMerchants(null, fromD, toD, pageable));
+        String key = "financeLossMaking:" + tenantId + ":" + fromD + ":" + toD + ":" + pageKey(pageable);
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> merchantRepository.findLossMakingMerchants(tenantId, fromD, toD, pageable)));
     }
 
+    @ReportResponse
     @GetMapping("/high-volume-low-margin")
     public ResponseEntity<Page<Map<String, Object>>> getHighVolLowMargin(
             @RequestParam(required = false) LocalDate from,
@@ -736,12 +828,16 @@ public class FinanceController {
             @RequestParam(defaultValue = "1.0") BigDecimal maxMarginPct,
             Pageable pageable) {
         Long tenantId = resolveTenantId();
-        if (from == null)
-            from = LocalDate.now().minusDays(30);
-        if (to == null)
-            to = LocalDate.now();
-        return ResponseEntity
-                .ok(merchantRepository.findHighVolumeLowMargin(tenantId, from, to, minVolume, maxMarginPct, pageable));
+        final LocalDate fromD = (from != null) ? from : LocalDate.now().minusDays(30);
+        final LocalDate toD = (to != null) ? to : LocalDate.now();
+        if (tenantId == null)
+            return ResponseEntity.ok(merchantRepository.findHighVolumeLowMargin(null, fromD, toD,
+                    minVolume, maxMarginPct, pageable));
+        String key = "financeHighVolLowMargin:" + tenantId + ":" + fromD + ":" + toD + ":"
+                + minVolume.toPlainString() + ":" + maxMarginPct.toPlainString() + ":" + pageKey(pageable);
+        return ResponseEntity.ok(reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> merchantRepository.findHighVolumeLowMargin(tenantId, fromD, toD,
+                        minVolume, maxMarginPct, pageable)));
     }
 
     // Helpers

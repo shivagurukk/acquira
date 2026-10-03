@@ -4,7 +4,7 @@ import com.acquira.batch.job.ExcelItemReader;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.batch.item.ExecutionContext;
+import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.core.io.FileSystemResource;
 
 import java.nio.charset.StandardCharsets;

@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -76,6 +77,7 @@ public class ChurnRiskController {
      * Returns: mid, merchantId, name, churnProbability (0..1), riskBand,
      * topReason, scoredBy, calcDate.
      */
+    @ReportResponse
     @GetMapping
     public ResponseEntity<?> getChurnRisk() {
         // The X-Tenant-Id header parameter this method used to declare was never

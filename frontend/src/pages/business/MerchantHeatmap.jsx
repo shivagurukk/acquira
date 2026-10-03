@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Paper, Typography, Stack, MenuItem, Select, FormControl, InputLabel, Tooltip, ToggleButton, ToggleButtonGroup } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Box, Paper, Typography, Stack, MenuItem, Select, FormControl, InputLabel, Tooltip, ToggleButton, ToggleButtonGroup } from '../../components/ui/system';
+import { DataGrid, GridToolbar } from '../../components/ui/system/DataGrid';
 import { Grid as GridIcon, TrendingUp, DollarSign, Users } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';

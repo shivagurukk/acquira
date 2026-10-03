@@ -1,5 +1,7 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.CardTypeDashboardRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +54,75 @@ public class CardTypeDashboardController {
     @Autowired
     private com.acquira.core.service.TenantService tenantService;
 
+    @Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    @Autowired
+    private tools.jackson.databind.ObjectMapper objectMapper;
+
+    @Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the page's first fetch: the D30 preset anchored on this page's own
+     * latest date, every drawer list sent as an empty array (cardTypeList
+     * absent = null), merchantName "" — see CardTypeDashboard.jsx EMPTY_LISTS —
+     * with the default 'scheme' breakdown tab and limit=15 top merchants.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("card-type-dashboard", tenantId -> {
+            Object latest = cardTypeDashboardRepository.getBounds(tenantId).get("latest");
+            if (latest == null) return;
+            java.time.LocalDate end = java.time.LocalDate.parse(latest.toString());
+            getKpis(defaultOpenFilter(end));
+            getTrend(defaultOpenFilter(end));
+            getBreakdown(defaultOpenFilter(end), "scheme");
+            getTopMerchants(defaultOpenFilter(end), 15);
+        });
+    }
+
+    /** The DTO the frontend's first POST deserializes into (fresh per call — handlers mutate it). */
+    private static VolumeRevenueFilterDTO defaultOpenFilter(java.time.LocalDate end) {
+        VolumeRevenueFilterDTO f = new VolumeRevenueFilterDTO();
+        f.setStartDate(end.minusDays(29));
+        f.setEndDate(end);
+        f.setSchemeList(new java.util.ArrayList<>());
+        f.setDestinationList(new java.util.ArrayList<>());
+        f.setChannelList(new java.util.ArrayList<>());
+        f.setMccList(new java.util.ArrayList<>());
+        f.setMidList(new java.util.ArrayList<>());
+        f.setSidList(new java.util.ArrayList<>());
+        f.setPartnerList(new java.util.ArrayList<>());
+        f.setRmList(new java.util.ArrayList<>());
+        f.setTeamLeaderList(new java.util.ArrayList<>());
+        f.setIndustryList(new java.util.ArrayList<>());
+        f.setSectorList(new java.util.ArrayList<>());
+        f.setTerminalTypeList(new java.util.ArrayList<>());
+        f.setMerchantName("");
+        return f;
+    }
+
+    private String filterKey(VolumeRevenueFilterDTO filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
+    }
+
+    /**
+     * ReportCache wrapper keyed on tenant + extra + the post-resolveFilters,
+     * post-defaultDates DTO. Unserializable filter = uncached load.
+     */
+    private <T> T cached(String prefix, Long tenantId, String extra, VolumeRevenueFilterDTO filters,
+            java.util.function.Supplier<T> loader) {
+        String fk = filterKey(filters);
+        if (fk == null) return loader.get();
+        return reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA,
+                prefix + ":" + tenantId + ":" + extra + ":" + fk, loader);
+    }
+
     // Same resolveFilters convention as BusinessAnalyticsController —
     // duplicated locally (rather than shared) to keep this feature additive
     // and isolated from the existing controller.
@@ -76,26 +147,34 @@ public class CardTypeDashboardController {
      * which is fact_transaction-anchored and can point at a range this table
      * has no rows for (opening the screen on a wall of zeros).
      */
+    @ReportResponse
     @GetMapping("/bounds")
     public Map<String, Object> getBounds() {
         return cardTypeDashboardRepository.getBounds(tenantService.getCurrentTenantId());
     }
 
+    @ReportResponse
     @PostMapping("/kpis")
     public Map<String, Object> getKpis(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
         Long tenantId = tenantService.getCurrentTenantId();
-        return cardTypeDashboardRepository.getKpis(filters, tenantId);
+        // The repository defaults a missing endDate to today — key on that day.
+        String asOf = filters.getEndDate() == null ? "now" + java.time.LocalDate.now() : "-";
+        return cached("cardTypeKpis", tenantId, asOf, filters,
+                () -> cardTypeDashboardRepository.getKpis(filters, tenantId));
     }
 
+    @ReportResponse
     @PostMapping("/trend")
     public List<Map<String, Object>> getTrend(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
         defaultDates(filters, 365); // 12 months of monthly buckets
         Long tenantId = tenantService.getCurrentTenantId();
-        return cardTypeDashboardRepository.getTrend(filters, tenantId);
+        return cached("cardTypeTrend", tenantId, "-", filters,
+                () -> cardTypeDashboardRepository.getTrend(filters, tenantId));
     }
 
+    @ReportResponse
     @PostMapping("/breakdown/{dimension}")
     public org.springframework.http.ResponseEntity<?> getBreakdown(@RequestBody VolumeRevenueFilterDTO filters,
                                                    @PathVariable String dimension) {
@@ -107,16 +186,19 @@ public class CardTypeDashboardController {
         resolveFilters(filters);
         defaultDates(filters, 30);
         Long tenantId = tenantService.getCurrentTenantId();
-        return org.springframework.http.ResponseEntity.ok(
-                cardTypeDashboardRepository.getBreakdown(filters, dimension, tenantId));
+        return org.springframework.http.ResponseEntity.ok(cached("cardTypeBreakdown", tenantId, dimension, filters,
+                () -> cardTypeDashboardRepository.getBreakdown(filters, dimension, tenantId)));
     }
 
+    @ReportResponse
     @PostMapping("/top-merchants")
     public List<Map<String, Object>> getTopMerchants(@RequestBody VolumeRevenueFilterDTO filters,
                                                        @RequestParam(defaultValue = "15") int limit) {
         resolveFilters(filters);
         defaultDates(filters, 30);
         Long tenantId = tenantService.getCurrentTenantId();
-        return cardTypeDashboardRepository.getTopMerchants(filters, tenantId, Math.min(Math.max(limit, 1), 100));
+        int lim = Math.min(Math.max(limit, 1), 100);
+        return cached("cardTypeTopMerchants", tenantId, "lim" + lim, filters,
+                () -> cardTypeDashboardRepository.getTopMerchants(filters, tenantId, lim));
     }
 }

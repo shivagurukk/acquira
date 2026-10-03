@@ -1,5 +1,7 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -32,6 +34,12 @@ public class MerchantSegmentController {
     @PersistenceContext
     private EntityManager entityManager;
 
+    // merchant_segment is written only by the ingest jobs' computeSegmentsStep
+    // (both jobs carry CacheEvictionJobListener) and dim_merchant only by
+    // ingest / dedup / sales-admin, all of which evict — safe to cache.
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
     private Long resolveTenant(Long headerTenant) {
         // SECURITY: the raw X-Tenant-Id header is attacker-controlled; use only the
         // filter-validated TenantContext (JwtRequestFilter rejects spoofed headers).
@@ -43,6 +51,7 @@ public class MerchantSegmentController {
      * Returns: merchantId, mid, name, mcc, rm, primarySegment, secondaryTags,
      * segmentReason, segmentScore, and the metric snapshot columns.
      */
+    @ReportResponse
     @GetMapping
     public ResponseEntity<?> list(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant) {
@@ -66,38 +75,43 @@ public class MerchantSegmentController {
             "                     WHERE s2.tenant_id = s.tenant_id AND s2.merchant_id = s.merchant_id) " +
             "ORDER BY s.segment_score DESC";
 
-        Query q = entityManager.createNativeQuery(sql);
-        q.setParameter("tid", tenantId);
+        List<Map<String, Object>> out = reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA,
+                "merchantSegments:" + tenantId, () -> {
+            Query q = entityManager.createNativeQuery(sql);
+            q.setParameter("tid", tenantId);
 
-        @SuppressWarnings("unchecked")
-        List<Object[]> rows = q.getResultList();
+            @SuppressWarnings("unchecked")
+            List<Object[]> rows = q.getResultList();
 
-        List<Map<String, Object>> out = new ArrayList<>(rows.size());
-        for (Object[] r : rows) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("merchantId", r[0] == null ? null : ((Number) r[0]).longValue());
-            m.put("mid", r[1]);
-            m.put("name", r[2]);
-            m.put("mcc", r[3]);
-            m.put("rm", r[4]);
-            m.put("primarySegment", r[5]);
-            m.put("secondaryTags", r[6]);
-            m.put("segmentReason", r[7]);
-            m.put("segmentScore", toDouble(r[8]));
-            m.put("totalVolume", toDouble(r[9]));
-            m.put("netRevenue", toDouble(r[10]));
-            m.put("netMarginPct", toDouble(r[11]));
-            m.put("effectiveBps", toDouble(r[12]));
-            m.put("netTakeBps", toDouble(r[13]));
-            m.put("volumeGrowthPct", toDouble(r[14]));
-            m.put("daysSinceLast", r[15] == null ? null : ((Number) r[15]).intValue());
-            m.put("calcDate", r[16] == null ? null : r[16].toString());
-            out.add(m);
-        }
+            List<Map<String, Object>> res = new ArrayList<>(rows.size());
+            for (Object[] r : rows) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("merchantId", r[0] == null ? null : ((Number) r[0]).longValue());
+                m.put("mid", r[1]);
+                m.put("name", r[2]);
+                m.put("mcc", r[3]);
+                m.put("rm", r[4]);
+                m.put("primarySegment", r[5]);
+                m.put("secondaryTags", r[6]);
+                m.put("segmentReason", r[7]);
+                m.put("segmentScore", toDouble(r[8]));
+                m.put("totalVolume", toDouble(r[9]));
+                m.put("netRevenue", toDouble(r[10]));
+                m.put("netMarginPct", toDouble(r[11]));
+                m.put("effectiveBps", toDouble(r[12]));
+                m.put("netTakeBps", toDouble(r[13]));
+                m.put("volumeGrowthPct", toDouble(r[14]));
+                m.put("daysSinceLast", r[15] == null ? null : ((Number) r[15]).intValue());
+                m.put("calcDate", r[16] == null ? null : r[16].toString());
+                res.add(m);
+            }
+            return res;
+        });
         return ResponseEntity.ok(out);
     }
 
     /** Segment-mix counts for the tenant's latest calc_date (for donut/summary tiles). */
+    @ReportResponse
     @GetMapping("/mix")
     public ResponseEntity<?> mix(
             @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant) {
@@ -113,19 +127,23 @@ public class MerchantSegmentController {
             "GROUP BY s.primary_segment " +
             "ORDER BY COUNT(*) DESC";
 
-        Query q = entityManager.createNativeQuery(sql);
-        q.setParameter("tid", tenantId);
+        List<Map<String, Object>> out = reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA,
+                "merchantSegmentMix:" + tenantId, () -> {
+            Query q = entityManager.createNativeQuery(sql);
+            q.setParameter("tid", tenantId);
 
-        @SuppressWarnings("unchecked")
-        List<Object[]> rows = q.getResultList();
+            @SuppressWarnings("unchecked")
+            List<Object[]> rows = q.getResultList();
 
-        List<Map<String, Object>> out = new ArrayList<>(rows.size());
-        for (Object[] r : rows) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("segment", r[0]);
-            m.put("count", r[1] == null ? 0 : ((Number) r[1]).longValue());
-            out.add(m);
-        }
+            List<Map<String, Object>> res = new ArrayList<>(rows.size());
+            for (Object[] r : rows) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("segment", r[0]);
+                m.put("count", r[1] == null ? 0 : ((Number) r[1]).longValue());
+                res.add(m);
+            }
+            return res;
+        });
         return ResponseEntity.ok(out);
     }
 

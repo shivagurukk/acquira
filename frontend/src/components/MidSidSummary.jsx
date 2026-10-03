@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Tooltip } from '@mui/material';
+import { Tooltip } from './ui/system';
 import { Store, Hash } from 'lucide-react';
 import api from '../api/axios';
 import { formatNumber } from '../utils/formatters';

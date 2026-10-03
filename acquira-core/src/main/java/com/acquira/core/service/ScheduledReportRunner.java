@@ -7,8 +7,8 @@ import com.acquira.common.repository.ReportScheduleRepository;
 import com.acquira.core.controller.AnalyticsExplorerController;
 import com.acquira.core.controller.AnalyticsExplorerController.ExplorerQuery;
 import com.acquira.core.controller.AnalyticsExplorerController.CalcMeasure;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,6 +53,7 @@ public class ScheduledReportRunner {
     @Value("${app.reports.dir:/opt/acquira/reports}")
     private String reportsDir;
 
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-scheduled-reports", lockAtLeastFor = "PT2M")
     @Scheduled(fixedDelayString = "${report.schedule.interval-ms:300000}",
                initialDelayString = "${report.schedule.initial-ms:90000}")
     public void runDue() {

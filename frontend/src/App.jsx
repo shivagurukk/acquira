@@ -93,7 +93,6 @@ const SecuritySettings = lazy(() => import('./pages/admin/SecuritySettings'));
 const DatabaseMaintenance = lazy(() => import('./pages/admin/DatabaseMaintenance'));
 const BinManagement = lazy(() => import('./pages/admin/BinManagement'));
 const AlertsNotifications = lazy(() => import('./pages/admin/AlertsNotifications'));
-const ApiManagement = lazy(() => import('./pages/admin/ApiManagement'));
 const Webhooks = lazy(() => import('./pages/admin/Webhooks'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 const SettingsHub = lazy(() => import('./pages/SettingsHub'));
@@ -290,9 +289,6 @@ function App() {
               } />
               <Route path="/admin/alerts" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><AlertsNotifications /></RoleGuard>
-              } />
-              <Route path="/admin/api-management" element={
-                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><ApiManagement /></RoleGuard>
               } />
               <Route path="/admin/webhooks" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><Webhooks /></RoleGuard>

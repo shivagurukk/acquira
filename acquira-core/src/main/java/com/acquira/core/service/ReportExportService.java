@@ -12,14 +12,14 @@ import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import com.lowagie.text.Document;
-import com.lowagie.text.PageSize;
-import com.lowagie.text.Paragraph;
-import com.lowagie.text.Phrase;
-import com.lowagie.text.FontFactory;
-import com.lowagie.text.pdf.PdfPCell;
-import com.lowagie.text.pdf.PdfPTable;
-import com.lowagie.text.pdf.PdfWriter;
+import org.openpdf.text.Document;
+import org.openpdf.text.PageSize;
+import org.openpdf.text.Paragraph;
+import org.openpdf.text.Phrase;
+import org.openpdf.text.FontFactory;
+import org.openpdf.text.pdf.PdfPCell;
+import org.openpdf.text.pdf.PdfPTable;
+import org.openpdf.text.pdf.PdfWriter;
 
 /**
  * Generates Excel, CSV and PDF exports from DataExplorer query results.
@@ -313,12 +313,12 @@ public class ReportExportService {
             PdfWriter.getInstance(doc, out);
             doc.open();
 
-            com.lowagie.text.Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new java.awt.Color(30, 41, 59));
+            org.openpdf.text.Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, new java.awt.Color(30, 41, 59));
             Paragraph title = new Paragraph(reportName != null ? reportName : "Report", titleFont);
             title.setSpacingAfter(6f);
             doc.add(title);
 
-            com.lowagie.text.Font metaFont = FontFactory.getFont(FontFactory.HELVETICA, 8, new java.awt.Color(100, 116, 139));
+            org.openpdf.text.Font metaFont = FontFactory.getFont(FontFactory.HELVETICA, 8, new java.awt.Color(100, 116, 139));
             doc.add(new Paragraph("Generated "
                 + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
                 + "  •  " + (rows != null ? rows.size() : 0) + " rows"
@@ -333,7 +333,7 @@ public class ReportExportService {
                 table.setWidthPercentage(100);
                 table.setSpacingBefore(10f);
 
-                com.lowagie.text.Font hf = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8, java.awt.Color.WHITE);
+                org.openpdf.text.Font hf = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8, java.awt.Color.WHITE);
                 java.awt.Color headerBg = new java.awt.Color(37, 99, 235);
                 java.awt.Color borderCol = new java.awt.Color(226, 232, 240);
                 for (String h : headers) {
@@ -344,7 +344,7 @@ public class ReportExportService {
                     table.addCell(c);
                 }
 
-                com.lowagie.text.Font cf = FontFactory.getFont(FontFactory.HELVETICA, 8, new java.awt.Color(30, 41, 59));
+                org.openpdf.text.Font cf = FontFactory.getFont(FontFactory.HELVETICA, 8, new java.awt.Color(30, 41, 59));
                 int limit = Math.min(rows.size(), 2000);
                 for (int r = 0; r < limit; r++) {
                     Map<String, Object> row = rows.get(r);

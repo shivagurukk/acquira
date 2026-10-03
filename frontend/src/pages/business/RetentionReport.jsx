@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack } from '@mui/material';
-import { DataGrid } from '@mui/x-data-grid';
+import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack } from '../../components/ui/system';
+import { DataGrid } from '../../components/ui/system/DataGrid';
 import { HeartHandshake, TrendingUp, Users, DollarSign, UserMinus, UserPlus, RefreshCw, AlertTriangle } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography } from './ui/system';
 import { ArrowRight, CalendarClock } from 'lucide-react';
 
 /**

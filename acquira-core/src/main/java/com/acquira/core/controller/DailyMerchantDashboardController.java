@@ -1,5 +1,7 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.dto.MerchantDailyMetricsDTO;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
@@ -26,6 +28,8 @@ import java.util.Set;
 public class DailyMerchantDashboardController {
 
     private final SumDailyMerchantRepository sumDailyMerchantRepository;
+    private final com.acquira.common.service.ReportCache reportCache;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -37,6 +41,7 @@ public class DailyMerchantDashboardController {
     // same path caused an "Ambiguous mapping" startup failure. The Daily
     // Merchant Dashboard frontend consumes that shared endpoint.
 
+    @ReportResponse
     @GetMapping("/daily-merchant-dashboard")
     public ResponseEntity<List<MerchantDailyMetricsDTO>> getDashboardData(
             @RequestParam(defaultValue = "0") int year,
@@ -64,7 +69,7 @@ public class DailyMerchantDashboardController {
         filter.setSidList(sidList);
         filter.setMerchantName(merchantName);
 
-        return ResponseEntity.ok(loadAndFilter(reportDate, tenantId, filter));
+        return ResponseEntity.ok(cachedLoad(reportDate, tenantId, filter));
     }
 
     /**
@@ -79,6 +84,7 @@ public class DailyMerchantDashboardController {
      * should disable those filter fields here, but if they leak through we just
      * don't apply them.
      */
+    @ReportResponse
     @PostMapping("/daily-merchant-dashboard-filtered")
     public ResponseEntity<List<MerchantDailyMetricsDTO>> getDashboardDataFiltered(
             @RequestParam(defaultValue = "0") int year,
@@ -94,7 +100,30 @@ public class DailyMerchantDashboardController {
         if (month == 0) month = now.getMonthValue();
         LocalDate reportDate = LocalDate.of(year, month, 1);
 
-        return ResponseEntity.ok(loadAndFilter(reportDate, tenantId, filter));
+        return ResponseEntity.ok(cachedLoad(reportDate, tenantId, filter));
+    }
+
+    /**
+     * loadAndFilter through ReportCache. Both endpoints share the key space —
+     * same (month, filter) yields the same rows. "Today" (the current day-of-
+     * month drives today/7-day/trend/status in the current month) is resolved
+     * here and keyed, so a cached current-month payload rolls over at midnight.
+     * Unserializable filter = uncached load.
+     */
+    private List<MerchantDailyMetricsDTO> cachedLoad(LocalDate reportDate, Long tenantId, VolumeRevenueFilterDTO filter) {
+        final LocalDate today = LocalDate.now();
+        String fk;
+        try {
+            fk = objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return loadAndFilter(reportDate, tenantId, filter, today);
+        }
+        // Past months don't depend on today — keep their key stable across days.
+        boolean currentMonth = java.time.YearMonth.from(today).equals(java.time.YearMonth.from(reportDate));
+        String key = "dailyMerchantDash:" + tenantId + ":" + reportDate + ":today"
+                + (currentMonth ? today.toString() : "-") + ":" + fk;
+        return reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> loadAndFilter(reportDate, tenantId, filter, today));
     }
 
     /**
@@ -113,7 +142,8 @@ public class DailyMerchantDashboardController {
      * merchantId in the DTO is dim_merchant.internal_id (a string), matching the
      * old contract and the MID/dim filter join keys.
      */
-    private List<MerchantDailyMetricsDTO> loadAndFilter(LocalDate reportDate, Long tenantId, VolumeRevenueFilterDTO filter) {
+    private List<MerchantDailyMetricsDTO> loadAndFilter(LocalDate reportDate, Long tenantId, VolumeRevenueFilterDTO filter,
+            LocalDate today) {
         LocalDate monthStart = reportDate.withDayOfMonth(1);
         LocalDate monthEnd = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
 
@@ -183,7 +213,6 @@ public class DailyMerchantDashboardController {
         }
 
         // Today's day-of-month, used only when the selected month IS the current month.
-        LocalDate today = LocalDate.now();
         boolean isCurrentMonth = today.getYear() == monthStart.getYear()
                 && today.getMonthValue() == monthStart.getMonthValue();
         int todayDom = today.getDayOfMonth();

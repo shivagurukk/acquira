@@ -1,5 +1,7 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.LocalDebitBankDashboardRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +51,69 @@ public class LocalDebitBankDashboardController {
     @Autowired
     private com.acquira.core.service.TenantService tenantService;
 
+    @Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    @Autowired
+    private tools.jackson.databind.ObjectMapper objectMapper;
+
+    @Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the page's first fetch: the D30 preset anchored on this page's own
+     * latest date with LocalDebitBankDashboard.jsx's EMPTY_LISTS (merchant-level
+     * lists only, merchantName ""), and top merchants for all banks, limit=25.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("local-debit-bank-dashboard", tenantId -> {
+            Object latest = repository.getBounds(tenantId).get("latest");
+            if (latest == null) return;
+            java.time.LocalDate end = java.time.LocalDate.parse(latest.toString());
+            getKpis(defaultOpenFilter(end));
+            getTrend(defaultOpenFilter(end));
+            getTopMerchants(defaultOpenFilter(end), null, 25);
+        });
+    }
+
+    /** The DTO the frontend's first POST deserializes into (fresh per call — handlers mutate it). */
+    private static VolumeRevenueFilterDTO defaultOpenFilter(java.time.LocalDate end) {
+        VolumeRevenueFilterDTO f = new VolumeRevenueFilterDTO();
+        f.setStartDate(end.minusDays(29));
+        f.setEndDate(end);
+        f.setMidList(new java.util.ArrayList<>());
+        f.setPartnerList(new java.util.ArrayList<>());
+        f.setRmList(new java.util.ArrayList<>());
+        f.setTeamLeaderList(new java.util.ArrayList<>());
+        f.setIndustryList(new java.util.ArrayList<>());
+        f.setMerchantName("");
+        return f;
+    }
+
+    private String filterKey(VolumeRevenueFilterDTO filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
+    }
+
+    /**
+     * ReportCache wrapper keyed on tenant + extra + the post-resolveFilters,
+     * post-defaultDates DTO. Unserializable filter = uncached load.
+     * Bank names resolve from ref_tenant_bin_bank at query time; that table is
+     * DB-seeded only (see class javadoc), so a manual re-seed is picked up at
+     * the cache TTL backstop, like any other out-of-band SQL.
+     */
+    private <T> T cached(String prefix, Long tenantId, String extra, VolumeRevenueFilterDTO filters,
+            java.util.function.Supplier<T> loader) {
+        String fk = filterKey(filters);
+        if (fk == null) return loader.get();
+        return reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA,
+                prefix + ":" + tenantId + ":" + extra + ":" + fk, loader);
+    }
+
     private Long requireTenant() {
         Long tenantId = tenantService.getCurrentTenantId();
         if (tenantId == null)
@@ -86,46 +151,66 @@ public class LocalDebitBankDashboardController {
     // ─── dashboard reads ───────────────────────────────────────────────
 
     /** MIN/MAX business_date in sum_daily_local_debit_bin — the page anchors its presets here. */
+    @ReportResponse
     @GetMapping("/bounds")
     public Map<String, Object> getBounds() {
         return repository.getBounds(requireTenant());
     }
 
+    @ReportResponse
     @PostMapping("/kpis")
     public Map<String, Object> getKpis(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
-        return repository.getKpis(filters, requireTenant());
+        Long tenantId = requireTenant();
+        // The repository defaults a missing endDate to today — key on that day.
+        String asOf = filters.getEndDate() == null ? "now" + java.time.LocalDate.now() : "-";
+        return cached("ldbDashKpis", tenantId, asOf, filters,
+                () -> repository.getKpis(filters, tenantId));
     }
 
+    @ReportResponse
     @PostMapping("/trend")
     public List<Map<String, Object>> getTrend(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
         defaultDates(filters, 365); // 12 months of monthly buckets
-        return repository.getTrend(filters, requireTenant());
+        Long tenantId = requireTenant();
+        return cached("ldbDashTrend", tenantId, "-", filters,
+                () -> repository.getTrend(filters, tenantId));
     }
 
+    @ReportResponse
     @PostMapping("/daily-trend")
     public List<Map<String, Object>> getDailyTrend(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
         defaultDates(filters, 30);
-        return repository.getDailyTrend(filters, requireTenant());
+        Long tenantId = requireTenant();
+        return cached("ldbDashDailyTrend", tenantId, "-", filters,
+                () -> repository.getDailyTrend(filters, tenantId));
     }
 
+    @ReportResponse
     @PostMapping("/top-merchants")
     public List<Map<String, Object>> getTopMerchants(@RequestBody VolumeRevenueFilterDTO filters,
                                                      @RequestParam(required = false) String bank,
                                                      @RequestParam(defaultValue = "25") int limit) {
         resolveFilters(filters);
         defaultDates(filters, 30);
-        return repository.getTopMerchants(filters, requireTenant(), bank, Math.min(Math.max(limit, 1), 100));
+        Long tenantId = requireTenant();
+        int lim = Math.min(Math.max(limit, 1), 100);
+        return cached("ldbDashTopMerchants", tenantId, (bank == null ? "allBanks" : "bank=" + bank) + ":lim" + lim, filters,
+                () -> repository.getTopMerchants(filters, tenantId, bank, lim));
     }
 
     /** Coverage worklist: top local-debit BINs with no row in ref_tenant_bin_bank. */
+    @ReportResponse
     @PostMapping("/unmatched-bins")
     public List<Map<String, Object>> getUnmatchedBins(@RequestBody VolumeRevenueFilterDTO filters,
                                                       @RequestParam(defaultValue = "50") int limit) {
         defaultDates(filters, 30);
-        return repository.getUnmatchedBins(filters, requireTenant(), Math.min(Math.max(limit, 1), 500));
+        Long tenantId = requireTenant();
+        int lim = Math.min(Math.max(limit, 1), 500);
+        return cached("ldbDashUnmatchedBins", tenantId, "lim" + lim, filters,
+                () -> repository.getUnmatchedBins(filters, tenantId, lim));
     }
 
     // ─── tenant BIN->bank list (READ-ONLY — seeded via the database) ────
@@ -135,6 +220,7 @@ public class LocalDebitBankDashboardController {
      * can show what it resolves against. Read-only by design: see the class
      * javadoc for why there is no write endpoint here.
      */
+    @ReportResponse
     @GetMapping("/bins")
     public List<Map<String, Object>> listBins() {
         Long tenantId = requireTenant();

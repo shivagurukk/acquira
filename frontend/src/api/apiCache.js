@@ -1,4 +1,5 @@
 import api from './axios';
+import { clearResponseCache } from './responseCache';
 
 /**
  * apiCache — a tiny client-side cache for near-static GET endpoints.
@@ -187,6 +188,7 @@ export function invalidateApiCache() {
     INFLIGHT.clear();
     REVALIDATED.clear();
     dropStored(() => true);
+    clearResponseCache();
 }
 
 /** Drop a single url (any params, current tenant). */

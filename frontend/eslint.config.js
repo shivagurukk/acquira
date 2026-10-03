@@ -24,7 +24,11 @@ export default [
       },
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // eslint-plugin-react-hooks 7 folded the React Compiler rules into
+      // `recommended` (set-state-in-effect, immutability, ...). Keep the two
+      // classic rules the codebase was linted against under v5.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       ...reactRefresh.configs.vite.rules,
       // caughtErrors: ESLint 9 flipped the default from 'none' to 'all';
       // keep the pre-9 behavior so unused catch params stay allowed.

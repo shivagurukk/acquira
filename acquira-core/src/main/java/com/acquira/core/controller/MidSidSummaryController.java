@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.repository.MidSidSummaryRepository;
 import com.acquira.common.service.ChannelSql;
@@ -57,6 +58,7 @@ public class MidSidSummaryController {
      *              default the executive pages open on.
      * channel    — POS / ECOM / ALL (anything else = ALL).
      */
+    @ReportResponse
     @GetMapping("/mid-sid-summary")
     public ResponseEntity<Map<String, Object>> getSummary(
             @RequestParam(required = false) String from,

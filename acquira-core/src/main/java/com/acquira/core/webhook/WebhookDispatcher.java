@@ -34,8 +34,8 @@ import java.util.concurrent.TimeUnit;
  * webhook_delivery row per endpoint. Insertion is the durability boundary:
  * a crash after dispatch() loses nothing, the poller picks the row up.
  *
- * DELIVERY: a dedicated daemon thread (same starvation argument as
- * ApiUsageRecorder — the shared TaskScheduler serves multi-minute jobs) polls
+ * DELIVERY: a dedicated daemon thread (the shared TaskScheduler serves
+ * multi-minute jobs, which would starve delivery) polls
  * due PENDING/FAILED rows every {@link #POLL_INTERVAL_MS} and POSTs the JSON
  * payload with an HMAC-SHA256 signature computed from the endpoint's secret:
  *   X-Acquira-Signature: sha256=&lt;hex hmac of the raw body&gt;
@@ -48,8 +48,9 @@ import java.util.concurrent.TimeUnit;
  * consecutive deliveries is auto-disabled so a dead integration cannot queue
  * work forever; re-enabling it from the admin UI resets the counter.
  *
- * Single-replica safe (in-process poller, no row claim needed); when the app
- * goes multi-replica the poll must claim rows with FOR UPDATE SKIP LOCKED.
+ * MULTI-REPLICA: rows are selected, not claimed, so each delivery pass runs
+ * under the ShedLock row "core-webhook-delivery" (see deliverDueLocked) — one
+ * replica delivers at a time.
  */
 @Component
 public class WebhookDispatcher {
@@ -83,7 +84,7 @@ public class WebhookDispatcher {
     public WebhookDispatcher(JdbcTemplate jdbc, CryptoService cryptoService) {
         this.jdbc = jdbc;
         this.cryptoService = cryptoService;
-        poller.scheduleWithFixedDelay(this::deliverDue, POLL_INTERVAL_MS, POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        poller.scheduleWithFixedDelay(this::deliverDueLocked, POLL_INTERVAL_MS, POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     // ─── Enqueue ───────────────────────────────────────────────────────
@@ -135,6 +136,27 @@ public class WebhookDispatcher {
     }
 
     // ─── Delivery loop ─────────────────────────────────────────────────
+
+    /**
+     * Rows are selected, not claimed, so two replicas polling at once would
+     * deliver the same webhook twice. A ShedLock row makes one replica the
+     * deliverer for each pass (and a crashed pod frees it within a minute).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private net.javacrumbs.shedlock.core.LockProvider lockProvider;
+
+    private void deliverDueLocked() {
+        try {
+            if (lockProvider == null) { deliverDue(); return; }
+            new net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor(lockProvider).executeWithLock(
+                    (Runnable) this::deliverDue,
+                    new net.javacrumbs.shedlock.core.LockConfiguration(java.time.Instant.now(),
+                            "core-webhook-delivery", Duration.ofMinutes(1), Duration.ofSeconds(5)));
+        } catch (Throwable t) {
+            // Never let an exception escape: the poller would stop for good.
+            log.warn("[Webhook] delivery pass failed: {}", t.toString());
+        }
+    }
 
     void deliverDue() {
         List<Map<String, Object>> due;

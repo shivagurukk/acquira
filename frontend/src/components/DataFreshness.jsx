@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Tooltip } from '@mui/material';
+import { Tooltip } from './ui/system';
 import { useAuth } from '../contexts/AuthContext';
 import { useDataBounds } from '../hooks/useDataBounds';
 

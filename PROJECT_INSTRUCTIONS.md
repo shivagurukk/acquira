@@ -9,7 +9,7 @@ Location: C:\Users\sivag\Desktop\cms\Acquira
 - Backend: Java 21, Spring Boot 3.2, multi-module Maven (acquira-common, acquira-batch, acquira-pdf, acquira-ai, acquira-core). Only acquira-core has a runnable main(); it component-scans the other four and runs as one process on port 8081.
 - Frontend: React 19 + Vite 5 + MUI 7 + Tailwind 4 + Recharts + React Router 7 + Axios + Framer Motion. Built by Vite, served static by Nginx, /api/* proxied to 8081.
 - DB: PostgreSQL — dev on 127.0.0.1:5433, prod on 5432.
-- PDF: Playwright + headless Chromium (HTML→PDF). Use the Chromium from mcr.microsoft.com/playwright/java:v1.40.0-jammy; do NOT use system Chromium.
+- PDF: Playwright + headless Chromium (HTML→PDF). Use the Chromium from mcr.microsoft.com/playwright/java:v1.63.0-jammy; do NOT use system Chromium.
 - AI: Ollama (llama3.2 at localhost:11434).
 
 ## Repo caveat

@@ -32,7 +32,7 @@ public class MerchantDedupController {
     private com.acquira.common.service.AuditService auditService;
 
     @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.cache.CacheManager cacheManager;
+    private com.acquira.common.service.ReportCache reportCache;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile Map<String, Object> lastResult = Map.of("status", "IDLE");
@@ -82,10 +82,7 @@ public class MerchantDedupController {
             } catch (Exception e) {
                 lastResult = Map.of("status", "FAILED", "tenantId", tenantId, "error", String.valueOf(e.getMessage()));
             } finally {
-                for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
-                    var cache = cacheManager.getCache(name);
-                    if (cache != null) cache.clear();
-                }
+                reportCache.evict("merchant dedup", tenantId);
                 TenantContext.clear();
                 running.set(false);
             }

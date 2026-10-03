@@ -67,7 +67,7 @@ public class BulkMigrationService {
     // jobs (migration, day deletion) — same reason CacheEvictionJobListener
     // exists for the ingest jobs.
     @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.cache.CacheManager cacheManager;
+    private com.acquira.common.service.ReportCache reportCache;
 
     private final com.acquira.common.service.MonthlyMetricsRebuilder monthlyMetricsRebuilder;
 
@@ -96,15 +96,8 @@ public class BulkMigrationService {
         this.monthlyMetricsRebuilder = monthlyMetricsRebuilder;
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> reportCacheWarmup;
-
     private void evictReportCaches() {
-        for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
-            org.springframework.cache.Cache cache = cacheManager.getCache(name);
-            if (cache != null) cache.clear();
-        }
-        reportCacheWarmup.ifAvailable(w -> w.requestWarm("bulk migration"));
+        reportCache.evict("bulk migration", null);
     }
 
     public Map<String, Object> getProgress() {

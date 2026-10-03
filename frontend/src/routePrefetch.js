@@ -100,7 +100,6 @@ const ROUTE_IMPORTS = {
     '/admin/maintenance': () => import('./pages/admin/DatabaseMaintenance'),
     '/admin/bin-management': () => import('./pages/admin/BinManagement'),
     '/admin/alerts': () => import('./pages/admin/AlertsNotifications'),
-    '/admin/api-management': () => import('./pages/admin/ApiManagement'),
     '/admin/webhooks': () => import('./pages/admin/Webhooks'),
 };
 

@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.model.SalesAgentProfile;
 import com.acquira.common.model.SalesCountryLead;
 import com.acquira.common.service.ChannelSql;
@@ -150,6 +151,7 @@ public class SalesPortfolioController {
      * totals would silently disagree with the leaderboard.
      */
     @PreAuthorize("@menuAccess.canAccess('/sales/executive')")
+    @ReportResponse
     @GetMapping("/executive")
     public ResponseEntity<?> getExecutiveDashboard(
             @RequestParam(defaultValue = "") String dateFrom,

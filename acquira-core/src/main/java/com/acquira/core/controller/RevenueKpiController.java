@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import jakarta.persistence.EntityManager;
@@ -58,15 +59,30 @@ public class RevenueKpiController {
     @org.springframework.beans.factory.annotation.Autowired
     private CurrencyMeta currencyMeta;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private tools.jackson.databind.ObjectMapper objectMapper;
+
+    private String filterKey(VolumeRevenueFilterDTO filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
+    }
+
+    @ReportResponse
     @PostMapping
     public ResponseEntity<Map<String, Object>> getRevenueKpis(
-            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+            @RequestBody(required = false) VolumeRevenueFilterDTO body) {
 
         // SECURITY: only the filter-validated TenantContext — never the raw
         // X-Tenant-Id header, which is attacker-controlled.
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
-        if (filter == null) filter = new VolumeRevenueFilterDTO();
+        final VolumeRevenueFilterDTO filter = (body != null) ? body : new VolumeRevenueFilterDTO();
 
         LocalDate endDate = filter.getEndDate();
         LocalDate startDate = filter.getStartDate();
@@ -82,6 +98,21 @@ public class RevenueKpiController {
         if (startDate == null) startDate = endDate.withDayOfMonth(1);
         if (startDate.isAfter(endDate)) startDate = endDate;
 
+        // Keyed on the RESOLVED window (the default end is the latest loaded
+        // date) plus the full filter body.
+        final LocalDate s = startDate, e = endDate;
+        String fk = filterKey(filter);
+        Map<String, Object> response = (fk == null)
+                ? computeRevenueKpis(tenantId, s, e, filter)
+                : reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                        "revenueKpis:" + tenantId + ":" + s + ":" + e + ":" + fk,
+                        () -> computeRevenueKpis(tenantId, s, e, filter));
+        // Copy before stamping the currency so the cached map is never mutated.
+        return ResponseEntity.ok(currencyMeta.attach(new HashMap<>(response), tenantId));
+    }
+
+    private Map<String, Object> computeRevenueKpis(Long tenantId, LocalDate startDate, LocalDate endDate,
+            VolumeRevenueFilterDTO filter) {
         boolean filtered = !isFilterEmpty(filter);
 
         Map<String, Object> response = new HashMap<>();
@@ -135,7 +166,7 @@ public class RevenueKpiController {
         response.put("dccPenetrationPct", pct(dccEligibleVol, dccTotalVol));   // eligible of total
         response.put("dccSourceBaseVolume", dccTotalVol);
 
-        return ResponseEntity.ok(currencyMeta.attach(response));
+        return response;
     }
 
     /* Filtered rate metrics off sum_daily_insight (MSF & volume real; no net rev). */

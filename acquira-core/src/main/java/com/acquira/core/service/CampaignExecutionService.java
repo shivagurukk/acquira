@@ -5,7 +5,7 @@ import com.acquira.common.model.*;
 import com.acquira.common.repository.*;
 import com.acquira.common.service.CryptoService;
 import com.acquira.common.service.MerchantInsightService;
-import com.acquira.pdf.service.PlaywrightPdfService;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
@@ -38,9 +38,9 @@ public class CampaignExecutionService {
     private final JdbcTemplate jdbcTemplate;
     // Decrypts the SMTP password (stored AES-256-GCM encrypted).
     private final CryptoService cryptoService;
-    // Builds the per-merchant statement data; PlaywrightPdfService renders it.
+    // Builds the per-merchant statement data; the pdf module renders it.
     private final MerchantInsightService merchantInsightService;
-    private final PlaywrightPdfService playwrightPdfService;
+    private final PdfRenderClient pdfRenderClient;
 
     /**
      * Build a JavaMailSender from the active SMTP config in the database.
@@ -296,7 +296,7 @@ public class CampaignExecutionService {
             // monthYear is the human-readable label printed on the statement.
             String monthYear = ym.getMonth().getDisplayName(
                     java.time.format.TextStyle.FULL, Locale.ENGLISH) + " " + ym.getYear();
-            return playwrightPdfService.generatePdf(dto,
+            return pdfRenderClient.generatePdf(dto,
                     merchantName != null ? merchantName : ("Merchant " + merchantId), monthYear);
         } catch (Exception e) {
             log.error("[Campaign] Statement PDF generation failed for merchant {} ({}): {}",

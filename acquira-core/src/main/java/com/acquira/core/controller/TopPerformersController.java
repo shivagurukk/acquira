@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.VolumeRevenueRepository;
 import com.acquira.common.service.ChannelSql;
@@ -89,7 +90,7 @@ public class TopPerformersController {
 
     /** Serializes the resolved filter DTO into a stable cache-key suffix. */
     @Autowired
-    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private tools.jackson.databind.ObjectMapper objectMapper;
 
     @Autowired
     private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
@@ -120,7 +121,7 @@ public class TopPerformersController {
                         + "\"destinationList\":[],\"schemeList\":[],\"cardTypeList\":[],"
                         + "\"channelList\":[],\"terminalTypeList\":[]"
                         + "}", VolumeRevenueFilterDTO.class);
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            } catch (tools.jackson.core.JacksonException e) {
                 return;
             }
             resolveFilters(filter, tenantId);
@@ -129,7 +130,7 @@ public class TopPerformersController {
             String fk;
             try {
                 fk = objectMapper.writeValueAsString(filter);
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            } catch (tools.jackson.core.JacksonException e) {
                 return;
             }
             boolean fx = NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
@@ -154,6 +155,7 @@ public class TopPerformersController {
         }
     }
 
+    @ReportResponse
     @PostMapping("/top-performers-filtered")
     public Map<String, Object> getTopPerformers(
             @RequestParam(defaultValue = "MTD") String period,
@@ -184,7 +186,7 @@ public class TopPerformersController {
         String fk;
         try {
             fk = objectMapper.writeValueAsString(filter);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (tools.jackson.core.JacksonException e) {
             fk = null;
         }
         if (fk == null) {

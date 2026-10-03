@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Box, Paper, Typography, Stack, IconButton, Chip } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Box, Paper, Typography, Stack, IconButton, Chip } from '../../components/ui/system';
+import { DataGrid, GridToolbar } from '../../components/ui/system/DataGrid';
 import { ChevronRight, ChevronDown, TrendingUp, Layers, DollarSign, Hash, CreditCard, Users, Percent, Receipt, Monitor, Globe } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';

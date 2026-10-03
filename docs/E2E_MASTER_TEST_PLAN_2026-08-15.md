@@ -1,4 +1,4 @@
-# Acquira — Master E2E Test Plan (556 new + 31 existing = 587 cases) — Bahrain & Egypt Tenants
+# Acquira — Master E2E Test Plan (538 new + 31 existing = 569 cases) — Bahrain & Egypt Tenants
 
 **Date prepared:** 2026-08-15
 **Prepared from:** live code inspection (frontend routes/guards, all REST controllers, `schema.sql`, `TransactionJobConfig`, `BinManagementController`, `JwtRequestFilter`, `AuthController`) plus all project docs (Feature Guide, Developer Guide, Security Audit 2026-08-04, EG/BH Implementation Report 2026-08-11, API Management Audit, Fee Engine Audit, Pre-Deployment Test Plan, OTP Plan) and the existing 31-case plan `docs/E2E_TEST_CASES_BAHRAIN_EGYPT_2026-08-15.md` (groups A–G), which this plan **extends without duplicating** — where an existing case covers a scenario, the new case cross-references it.
@@ -44,10 +44,9 @@ Feed files: `TBH_E2E_TXN_JUL2026.csv` / `TEG_E2E_TXN_JUL2026.csv` (AMS, Entity N
 | BIN-based card/product type NOT wired into ingestion (`card_type_source` config-only) | BinManagementController.java:16, Tenant.java:51 | E2E-BIN-030..037, existing C3/C4/D2 |
 | Menu grants not enforced server-side (`@menuAccess` bean never referenced) | MenuAccessEvaluator unused | E2E-RBAC-020..027 |
 | ~40/53 controllers lack `@PreAuthorize` — ROLE_USER can call admin-adjacent business/finance/report APIs | Security audit M-7 | E2E-SEC-010..018 |
-| `X-Forwarded-For` trusted in RateLimitFilter/ApiKeyAuthFilter/AuthController | Security audit H-1 | E2E-SEC-030..032 |
+| `X-Forwarded-For` trusted in RateLimitFilter/AuthController | Security audit H-1 | E2E-SEC-030..032 |
 | PANs cleartext in DB; masking only in TransactionController path | Security audit H-2 | E2E-SEC-020..022 |
 | schema.sql re-seed resets `admin` password on restart (prod C-1) | Security audit C-1 | E2E-SEC-001 |
-| API key rotation absent; IP allowlist exact-string only | API audit | E2E-SEC-040..049 |
 | No duplicate-file guard on transaction uploads; APPEND double-counts | FileUploadService | E2E-INGEST-030..032 |
 
 ---
@@ -178,7 +177,7 @@ Feed files: `TBH_E2E_TXN_JUL2026.csv` / `TEG_E2E_TXN_JUL2026.csv` (AMS, Entity N
 | E2E-USER-058 | Concurrency | TBH | SA | Two admins edit same user | simultaneous PUT | Last-write-wins or conflict handling; no corruption | P3 | L | N | N |
 | E2E-USER-059 | Validation | TBH | SA | Very long field values | 500-char displayName/email | Rejected or truncated safely; no 500 | P3 | L | B | N |
 | E2E-USER-060 | Validation | TBH | SA | Unicode / injection in name | `<script>`, `Ω名` | Stored/escaped safely; no XSS on render in user list | P2 | H | S | N |
-## 7. Module: Roles, Permissions & RBAC (E2E-RBAC) — 45 cases
+## 7. Module: Roles, Permissions & RBAC (E2E-RBAC) — 44 cases
 
 **Model:** Spring roles {ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_USER} × groups {Super Admin, Bank Admin, Business User, Finance User, Ops User} → menus via `sys_group_menu`. Client `RoleGuard` = exact `userRole` string match. Server URL rules: `/api/admin/**` & `/api/batch/**` = ADMIN+; everything else = authenticated only. Known gap: `@menuAccess` never referenced → menu-only screens' APIs reachable by any authenticated user.
 
@@ -215,7 +214,6 @@ Feed files: `TBH_E2E_TXN_JUL2026.csv` / `TEG_E2E_TXN_JUL2026.csv` (AMS, Entity N
 | E2E-RBAC-029 | Escalation | TBH | BA | Bank Admin cannot self-escalate to SA | edit own group to Super Admin | Blocked by mayAssignRole | P1 | C | S | N |
 | E2E-RBAC-030 | Escalation | TBH | BU | Business user cannot grant self admin | via any endpoint | No path; 403 | P1 | H | S | N |
 | E2E-RBAC-031 | SMTP guard | TBH | BU | Non-admin on SMTP config | POST /api/email/smtp-configs | 403 (per-method ADMIN+) | P2 | H | S | N |
-| E2E-RBAC-032 | API-key guard | TBH | BU | Non-admin on API keys | GET /api/admin/api-keys | 403 | P2 | H | S | N |
 | E2E-RBAC-033 | Provision guard | TBH | ADMIN | ADMIN on tenant provisioning | GET /api/admin/provision/scripts | 403 (class SUPER_ADMIN) | P2 | H | S | N |
 | E2E-RBAC-034 | Backup guard | TBH | ADMIN | ADMIN on backups | GET /api/admin/backups | 403 (class SUPER_ADMIN) | P2 | H | S | N |
 | E2E-RBAC-035 | Migration guard | TBH | ADMIN | ADMIN on migration start | POST /api/admin/migration/start | 403 (SA only) | P2 | H | S | N |
@@ -532,9 +530,9 @@ Verify displayed data reconciles to DB per tenant, with isolation. All read-only
 | E2E-UI-038 | Top performers | TBH | BU | Six Top-10 panels | /business/top-performers | Per-panel CSV; leaderboards use total_base_volume | P3 | L | U | P |
 | E2E-UI-039 | Opportunity | TBH | BU | Upsell scoring | /business/opportunity | Grid sorted by score; CSV | P3 | L | U | P |
 | E2E-UI-040 | No 404 route | any | any | Unknown path renders blank | navigate `/nonexistent` | Documents missing catch-all/404 (UX defect) | P3 | L | N | N |
-## 13. Module: PDF / Statement / Report Generation (E2E-PDF) — 35 cases
+## 13. Module: PDF / Statement / Report Generation (E2E-PDF) — 33 cases
 
-**Endpoints:** `/api/business/insights/pdf|generate-all|generate-by-mid|check-status|list-reports|download-report|download-all-reports|batch-status/{jobId}`; `/api/external/reports/*` (API-key). UI: `/business/report-manager` (ADMIN+), `/business/emails` (ADMIN+). Output path `reports/<bankShortCode>/<YYYY-MM>/`. Email via email_queue → EmailQueueProcessor (60s).
+**Endpoints:** `/api/business/insights/pdf|generate-all|generate-by-mid|check-status|list-reports|download-report|download-all-reports|batch-status/{jobId}`. UI: `/business/report-manager` (ADMIN+), `/business/emails` (ADMIN+). Output path `reports/<bankShortCode>/<YYYY-MM>/`. Email via email_queue → EmailQueueProcessor (60s).
 
 | ID | Sub-module | Tenant | Role | Scenario & steps | Expected result & validation | Pri | Sev | Type | P/N |
 |---|---|---|---|---|---|---|---|---|---|
@@ -567,14 +565,12 @@ Verify displayed data reconciles to DB per tenant, with isolation. All read-only
 | E2E-PDF-027 | Email logs ISO | TEG | ADMIN | Logs scoped | /email/logs?month= | Only TEG merchant emails | P2 | M | ISO | N |
 | E2E-PDF-028 | SMTP config | TBH | ADMIN | Active SMTP resolves | send with active config | AES-decrypted password used; __UNCHANGED__ preserves stored secret on edit | P2 | M | I | P |
 | E2E-PDF-029 | SMTP test | TBH | ADMIN | Test config probe | POST smtp-configs/{id}/test | Connectivity result surfaced | P3 | L | F | P |
-| E2E-PDF-030 | External report API | ext | key | API-key report list | GET /api/external/reports/list with X-API-Key | Only that key's tenant reports; scope enforced | P2 | H | A | P |
-| E2E-PDF-031 | External report API neg | ext | none | No API key | omit header | 401 | P2 | H | S | N |
 | E2E-PDF-032 | Single merchant PDF | TBH | BU | MerchantInsights pdf download | /business/insights/pdf?year=&month= | Blob Merchant_Insight_{y}_{m}.pdf; scoped to tenant | P3 | M | F | P |
 | E2E-PDF-033 | PDF reconciliation | TBH | ADMIN | Totals reconcile to DB exactly | compare PDF totals to fact Σ | Any excess = leakage; must match to the fils | P1 | H | PDF | N |
 | E2E-PDF-034 | Refund in PDF | TBH | ADMIN | Refund reflected | merchant with refund row | Net volume reduced correctly in PDF | P3 | M | PDF | P |
 | E2E-PDF-035 | Campaign PDF attach | TBH | ADMIN | EmailCampaign REPORT_PDF | campaign launch | Draft until launch; PDF attached; retry-failed works | P3 | L | I | P |
 
-## 14. Module: Security & API Access (E2E-SEC) — 49 cases
+## 14. Module: Security & API Access (E2E-SEC) — 34 cases
 
 Security-audit-driven. Many document known findings (record actual, don't assume fixed).
 
@@ -616,27 +612,12 @@ Security-audit-driven. Many document known findings (record actual, don't assume
 | E2E-SEC-023 | PAN masked in txn UI | TBH | BU | Transactions grid | Only last-4 shown (masking applied in TransactionController path) | P2 | M | F | P |
 | E2E-SEC-024 | PAN masked in export | TBH | ADMIN | CSV export | Masked last-4 in file | P2 | H | F | P |
 
-### 14d. External API keys (API audit AT-1..AT-10)
+### 14d. Proxy headers & bank-integration security
 
 | ID | Sub-module | Tenant | Role | Scenario & steps | Expected result | Pri | Sev | Type | P/N |
 |---|---|---|---|---|---|---|---|---|---|
 | E2E-SEC-030 | XFF spoof rate limit (H-1) | n/a | n/a | Send X-Forwarded-For spoofed first hop | Rate limit bypassable — record H-1 | P1 | H | S | N |
-| E2E-SEC-031 | XFF spoof API-key IP allowlist | ext | key | Forge XFF to match allowlist | IP allowlist decorative — record | P1 | H | S | N |
 | E2E-SEC-032 | XFF audit IP | any | any | Spoofed IP in audit_log | Attacker-chosen IP recorded — record | P2 | M | S | N |
-| E2E-SEC-033 | Key create once | TBH | ADMIN | Create API key | Raw key shown once; only BCrypt hash stored; GET returns prefixes | P2 | M | F | P |
-| E2E-SEC-034 | Key scope required | TBH | ADMIN | Create key no scope | "Select at least one permission" | P3 | M | N | N |
-| E2E-SEC-035 | Key auth | ext | key | Valid key on /api/v1/transactions | 200 within scope; startDate/endDate required, ≤92d | P2 | M | A | P |
-| E2E-SEC-036 | Key expiry | ext | key | Expired key | 401 | P2 | M | S | N |
-| E2E-SEC-037 | Key rate limit | ext | key | Exceed per-key limit | 429 | P2 | M | S | N |
-| E2E-SEC-038 | AT-5 merchant enum | ext | key | /merchants/{other_mid}/summary | Currently returns other merchant (key=bank scope) — record AT-5 | P1 | C | S | N |
-| E2E-SEC-039 | AT-8 bank-wide aggregate | ext | key | /api/v1/analytics/volume, /finance/summary | Bank-wide net revenue reachable by key — record AT-8 | P1 | H | S | N |
-| E2E-SEC-040 | Key rotation absent | TBH | ADMIN | Attempt rotate | No rotation endpoint (revoke+create = outage) — record | P3 | M | N | N |
-| E2E-SEC-041 | Immortal key | TBH | ADMIN | Create key blank expiry | expires_at null → never expires — record | P3 | M | N | N |
-| E2E-SEC-042 | IP allowlist CIDR | ext | key | Set 10.0.0.0/8 | Exact-string match never matches CIDR — record | P3 | M | N | N |
-| E2E-SEC-043 | Rejected before recordUsage | ext | key | Brute force bad keys | Rejected requests not logged (invisible brute force) — record | P2 | M | S | N |
-| E2E-SEC-044 | Scope corruption | TBH | ADMIN | Scope with `,`/`"` | Hand-split TEXT corrupts row — record | P3 | M | N | N |
-| E2E-SEC-045 | permitAll prefix leak | ext | none | `//api/v1/...`, encoded segments | shouldNotFilter URI mismatch → unauth leak — record | P1 | H | S | N |
-| E2E-SEC-046 | Break-glass key (M-4) | n/a | n/a | Static all-tenant key | All-tenant, no scopes, MAX rate — verify off by default | P2 | H | S | N |
 | E2E-SEC-047 | Encryption key fallback | n/a | n/a | app.encryption.key unset | Falls back to hardcoded key encrypting bank passwords — record OQ-2 | P1 | C | S | N |
 | E2E-SEC-048 | Integration SQL abuse | TBH | ADMIN | Arbitrary SELECT in integration_report | No column allowlist/approval — record | P2 | H | S | N |
 | E2E-SEC-049 | MSSQL trustServerCert | n/a | SA | Bank JDBC link | trustServerCert defaults true (MITM) — record | P2 | H | S | N |
@@ -648,14 +629,14 @@ Security-audit-driven. Many document known findings (record actual, don't assume
 | E2E-SEC-055 | Tracked secrets in git | n/a | n/a | Repo hygiene (H-5) | acq-congif.txt, sample data, PDFs tracked — record | P3 | L | S | N |
 ## 15. Module: Admin, Settings & Platform Ops (E2E-ADMIN) — 40 cases
 
-Covers SettingsHub panels, SMTP/S3/SSO/Alerts/Budget/Maintenance/Backup/Migration/Integration/Audit/Regional/API-management screens.
+Covers SettingsHub panels, SMTP/S3/SSO/Alerts/Budget/Maintenance/Backup/Migration/Integration/Audit/Regional screens.
 
 | ID | Sub-module | Tenant | Role | Scenario & steps | Expected result & validation | Pri | Sev | Type | P/N |
 |---|---|---|---|---|---|---|---|---|---|
 | E2E-ADMIN-001 | Security Settings | TBH | ADMIN | Save password policy | /admin/security-settings | GET/PUT /admin/settings; composition rules persist; [AUD] UPDATE_SECURITY_POLICY | P2 | M | F | P |
 | E2E-ADMIN-002 | Security Settings | TBH | ADMIN | Lockout/rate-limit config | set max failed=5, lockout=15m | Values drive LOGIN-008; live from SecurityPolicyService | P2 | M | F | P |
 | E2E-ADMIN-003 | Security Settings | TBH | ADMIN | Session timeout config | set session_timeout_minutes | Feeds idle logout (LOGIN-026) | P2 | M | F | P |
-| E2E-ADMIN-004 | Security Settings | TBH | ADMIN | Enforcement-pending honesty | MFA/IP allowlist/API-key cards | Labeled "enforcement pending"; no false claim (TC-F9) | P2 | H | U | P |
+| E2E-ADMIN-004 | Security Settings | TBH | ADMIN | Enforcement-pending honesty | MFA/IP allowlist/audit cards | Labeled "enforcement pending"; no false claim (TC-F9) | P2 | H | U | P |
 | E2E-ADMIN-005 | Security Settings | TBH | ADMIN | Revoke all sessions | button | POST revoke-all-sessions; toasts if unavailable | P3 | M | F | P |
 | E2E-ADMIN-006 | Security Settings | TBH | ADMIN | Locked users panel + unlock | list + unlock | GET locked-users; per-user unlock | P3 | L | F | P |
 | E2E-ADMIN-007 | SMTP | TBH | ADMIN | Create/edit SMTP config | host/port required | Saved; secret AES-encrypted; edit placeholder "leave blank to keep current" | P2 | M | F | P |
@@ -750,7 +731,7 @@ Every documented requirement mapped to ≥1 case. Status column filled at execut
 | R18 | Currency decimals per tenant (BHD 3 / EGP 2) | TENANT-011, INGEST-014..016, PDF-021, 023 | BH/EG | SA | P | ☐ |
 | R19 | Tenant switching refreshes all data | TENANT-020..029, UI-007 | TBH↔TEG | SA/OPS | P+N | ☐ |
 | R20 | Tenant isolation (header/IDOR/query/DB/PDF/report) | TENANT-030..070, PDF-005..006, 016, FEE-026 | all | all | N | ☐ |
-| R21 | Cross-tenant security (URL/ID/payload/nav) | TENANT-034..044, 062, SEC-038 | TBH/TEG | BA | N | ☐ |
+| R21 | Cross-tenant security (URL/ID/payload/nav) | TENANT-034..044, 062 | TBH/TEG | BA | N | ☐ |
 | R22 | RLS reality / fail-open | TENANT-049, 062, SEC-020 | all | SA | N | ☐ |
 | R23 | BIN upload/validation/config | BIN-001..029, 045..055 | n/a | SA | P+N | ☐ |
 | R24 | Card type from BIN (first-6) — requirement | BIN-030..037, existing C3/C4/D2 | TBH/TEG | SA | P(FAIL) | ☐ |
@@ -771,7 +752,6 @@ Every documented requirement mapped to ≥1 case. Status column filled at execut
 | R39 | PDF content & precision correctness | PDF-002, 004, 021..023, 033..034 | both | ADMIN | P+N | ☐ |
 | R40 | PDF/report tenant isolation | PDF-005..006, 013..014, 016, 027 | both | ADMIN | N | ☐ |
 | R41 | Statement email / SMTP / queue | PDF-024..029, 035, ADMIN-007..010 | TBH/TEG | ADMIN | P | ☐ |
-| R42 | External report/data API (keys, scopes) | PDF-030..031, SEC-030..049 | ext | key | P+N | ☐ |
 | R43 | Security hardening (seed reset, JWT, CSP, XSS, PAN) | SEC-001..009, 020..024, 052..055 | all | all/SA | N | ☐ |
 | R44 | Admin/settings panels | ADMIN-001..039 | TBH | ADMIN/SA | P+N | ☐ |
 | R45 | Maintenance/backup/migration ops | ADMIN-023..035, 040 | n/a | SA/ADMIN | P+N | ☐ |
@@ -815,7 +795,6 @@ For each case ID record: **Actual Result · Pass/Fail/Blocked · Defect ID · Ev
 | M6 | BH/EG `terminal_channel_map` rows marked ASSUMPTION | Channel-based fee cases may mis-resolve | FEE-013 | Business — supply real terminal vocab |
 | M7 | BH/EG ticket bands marked ASSUMPTION | Ticket-band cases (FEE-024..025) | FEE bands | Business |
 | M8 | SMTP dev config / OTP dev-log access | OTP + email cases (LOGIN-037..046, PDF-024) | R5, R41 | Ops — enable dev SMTP or OTP logging |
-| M9 | External API key + scope provisioned | External API cases (SEC-030..049, PDF-030) | R42 | SA creates key with scopes |
 | M10 | DB read access (psql on :5433) | All `[DB]` validations | ~40% of cases | Provided in env |
 | M11 | Prod-like config for SEC-001/002/047 | Seed-reset & encryption-key findings are prod-config specific | R43 partial | Verify against prod ConfigMap, not dev |
 | M12 | Legacy `legacy_transactions` table for migration cases | ADMIN-032..033 | R45 partial | Optional — skip if absent |
@@ -827,7 +806,7 @@ These are **not** authoring errors — they assert the requirement and are expec
 - **BIN-030..037** + existing C3/C4/D2 — BIN-based card/product identification not wired.
 - **RBAC-020..026, SEC-010..018** — missing `@PreAuthorize` on business/finance/report endpoints (M-7).
 - **SEC-001, 002, 047** — schema re-seed password reset, default JWT/encryption keys (prod config).
-- **SEC-020..022, 038..045** — cleartext PAN, merchant-scope API keys, XFF/CIDR allowlist gaps.
+- **SEC-020..022, 030..032** — cleartext PAN, XFF spoofing gaps.
 - **INGEST-031, 032, FLOW-012, 021** — append double-count, split-day data loss.
 - **FEE-027..032** — on-us, regional, premium/debit defaults, shadow-row reseed, history repricing.
 
@@ -835,9 +814,9 @@ Record each as PASS **only if the code has since been fixed**; otherwise FAIL wi
 
 ## 22. Final Test Report — template to complete after execution
 
-**Totals:** prepared 556 (this plan) + 31 (existing A–G) = **587 cases**. Executed __ · Passed __ · Failed __ · Blocked __ · Not executed __ · Pass % __.
+**Totals:** prepared 538 (this plan) + 31 (existing A–G) = **569 cases**. Executed __ · Passed __ · Failed __ · Blocked __ · Not executed __ · Pass % __.
 
-**By module:** LOGIN 55 · USER 60 · RBAC 45 · TENANT 69 · BIN 53 · INGEST 45 · FEE 40 · UI 40 · PDF 35 · SEC 49 · ADMIN 40 · FLOW 25.
+**By module:** LOGIN 55 · USER 60 · RBAC 44 · TENANT 69 · BIN 53 · INGEST 45 · FEE 40 · UI 40 · PDF 33 · SEC 34 · ADMIN 40 · FLOW 25.
 
 Fill after run:
 - Results by module / by tenant (BH vs EG vs ACQ) / by role (SA/ADMIN/BU/FU/OPS).

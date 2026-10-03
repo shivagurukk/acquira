@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.service.AuditService;
 import com.acquira.common.service.RevenueLeakageDetectionService;
@@ -37,6 +38,11 @@ public class RevenueLeakageController {
     }
 
     /** List flags. status = OPEN (default) | RESOLVED | IGNORED | ALL. */
+    // Not server-cached: revenue_leakage_flags is written by the resolve/ignore/
+    // reopen/run actions below and by post-ingest detection, and the queries are
+    // cheap single-table scans. @ReportResponse only adds ETag/304 + the frontend
+    // cache, which every POST here clears.
+    @ReportResponse
     @GetMapping("/flags")
     public ResponseEntity<List<Map<String, Object>>> list(
             @RequestParam(defaultValue = "OPEN") String status,
@@ -90,6 +96,7 @@ public class RevenueLeakageController {
     }
 
     /** Headline counts + estimated revenue at risk, for the KPI cards. */
+    @ReportResponse
     @GetMapping("/summary")
     public ResponseEntity<Map<String, Object>> summary() {
         Long tenantId = TenantContext.getCurrentTenant();

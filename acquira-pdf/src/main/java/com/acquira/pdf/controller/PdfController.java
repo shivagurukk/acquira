@@ -971,12 +971,14 @@ public class PdfController {
             job.put("failed",      0);
             job.put("phase",       "RUNNING");
             s3UploadJobs.put(jobId, job);
+            saveS3Job(jobId, tenantId, job, false);
 
             final String capturedBankCode = bankShortCode;
             final String capturedYearMonth = targetMonth.toString();
             Thread worker = new Thread(() -> {
                 TenantContext.setCurrentTenant(tenantId);
                 int ok = 0, fail = 0;
+                long lastSave = System.currentTimeMillis();
                 try {
                     for (Path pdf : pdfs) {
                         try {
@@ -989,6 +991,12 @@ public class PdfController {
                         }
                         job.put("uploaded", ok);
                         job.put("failed",   fail);
+                        // Also the liveness heartbeat (stale after 45s) — every 2s is
+                        // plenty; one DB upsert per file slowed big uploads.
+                        if (System.currentTimeMillis() - lastSave >= 2000) {
+                            saveS3Job(jobId, tenantId, job, false);
+                            lastSave = System.currentTimeMillis();
+                        }
                     }
                     job.put("phase", "COMPLETED");
                     log.info("[S3-POSTHOC] Done — {} uploaded, {} failed ({} tenant:{})",
@@ -998,6 +1006,7 @@ public class PdfController {
                     job.put("message", e.getMessage());
                     log.error("[S3-POSTHOC] Job {} failed: {}", jobId, e.getMessage());
                 } finally {
+                    saveS3Job(jobId, tenantId, job, true);
                     TenantContext.clear();
                 }
             }, "s3-posthoc-upload");
@@ -1018,8 +1027,14 @@ public class PdfController {
     @GetMapping("/s3-upload-status/{jobId}")
     public ResponseEntity<Map<String, Object>> getS3UploadStatus(@PathVariable String jobId) {
         ConcurrentHashMap<String, Object> job = s3UploadJobs.get(jobId);
+        if (job == null) {
+            // Not this replica's job (or the pod restarted): use the persisted copy.
+            return pdfJobStore == null ? ResponseEntity.notFound().build()
+                    : pdfJobStore.find(jobId, com.acquira.pdf.service.PdfJobStore.KIND_S3_UPLOAD, TenantContext.getCurrentTenant())
+                        .map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+        }
         // Tenant guard: a job is visible only to the tenant that started it.
-        if (job == null || !Objects.equals(job.get("tenantId"), TenantContext.getCurrentTenant())) {
+        if (!Objects.equals(job.get("tenantId"), TenantContext.getCurrentTenant())) {
             return ResponseEntity.notFound().build();
         }
         Map<String, Object> out = new LinkedHashMap<>(job);
@@ -1027,35 +1042,44 @@ public class PdfController {
         return ResponseEntity.ok(out);
     }
 
+    /** Optional so the controller still constructs in slices without the store. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.acquira.pdf.service.PdfJobStore pdfJobStore;
+
+    private void saveS3Job(String jobId, Long tenantId, Map<String, Object> job, boolean finished) {
+        if (pdfJobStore == null) return;
+        Map<String, Object> snapshot = new LinkedHashMap<>(job);
+        snapshot.remove("tenantId");
+        pdfJobStore.save(jobId, com.acquira.pdf.service.PdfJobStore.KIND_S3_UPLOAD, tenantId, snapshot, finished);
+    }
+
     // ─── Batch Monitoring ──────────────────────────────────────────────
 
-    /** A batch job is visible/cancellable only within the tenant that started it. */
-    private boolean ownsBatchJob(BatchJobStatus status) {
-        return status != null && Objects.equals(status.tenantId, TenantContext.getCurrentTenant());
-    }
+    // A batch job is visible/cancellable only within the tenant that started it.
+    // The three endpoints below answer from this replica's live job when it
+    // owns it, otherwise from the persisted copy (PdfJobStore) — so a poll that
+    // lands on another pdf replica, or arrives after a restart, still gets an
+    // answer. All of them are scoped to the caller's tenant.
 
     @GetMapping("/batch-status/{jobId}")
     public ResponseEntity<Map<String, Object>> getBatchStatus(@PathVariable String jobId) {
-        BatchJobStatus status = playwrightPdfService.getJobStatus(jobId);
-        if (!ownsBatchJob(status)) return ResponseEntity.notFound().build();
-        return ResponseEntity.ok(status.toMap());
+        Map<String, Object> status = playwrightPdfService.jobStatusView(jobId, TenantContext.getCurrentTenant());
+        if (status == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(status);
     }
 
     @GetMapping("/batch-jobs")
     public ResponseEntity<List<Map<String, Object>>> listBatchJobs() {
-        List<Map<String, Object>> jobs = new ArrayList<>();
-        playwrightPdfService.getActiveJobs().values().forEach(s -> {
-            if (ownsBatchJob(s)) jobs.add(s.toMap());
-        });
-        return ResponseEntity.ok(jobs);
+        return ResponseEntity.ok(playwrightPdfService.jobViews(TenantContext.getCurrentTenant()));
     }
 
     @PostMapping("/batch-cancel/{jobId}")
     public ResponseEntity<Map<String, Object>> cancelBatch(@PathVariable String jobId) {
-        if (!ownsBatchJob(playwrightPdfService.getJobStatus(jobId))) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (playwrightPdfService.jobStatusView(jobId, tenantId) == null) {
             return ResponseEntity.notFound().build();
         }
-        boolean cancelled = playwrightPdfService.cancelJob(jobId);
+        boolean cancelled = playwrightPdfService.cancelJobAnywhere(jobId, tenantId);
         return ResponseEntity.ok(Map.of("jobId", jobId, "cancelled", cancelled));
     }
 

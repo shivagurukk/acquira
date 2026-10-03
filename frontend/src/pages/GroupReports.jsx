@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Box, Paper, Typography, Stack, Tabs, Tab, Chip, Tooltip } from '@mui/material';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Box, Paper, Typography, Stack, Tabs, Tab, Chip, Tooltip } from '../components/ui/system';
+import { DataGrid, GridToolbar } from '../components/ui/system/DataGrid';
 import { Layers, AlertCircle, Users, Hash, DollarSign, TrendingUp, Inbox, Receipt, Percent, Coins } from 'lucide-react';
 import api from '../api/axios';
 import PremiumReportHeader from '../components/PremiumReportHeader';

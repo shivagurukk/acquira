@@ -1,6 +1,9 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.config.TenantContext;
+import com.acquira.common.config.ReportCacheConfig;
+import com.acquira.common.config.ReportResponse;
+import com.acquira.common.service.ReportCache;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -34,6 +37,7 @@ import java.util.*;
 public class CrossFilterController {
 
     private final JdbcTemplate jdbcTemplate;
+    private final ReportCache reportCache;
 
     private static final List<String> DIMS = List.of("scheme", "channel", "cardType", "destination", "mcc");
     private static final Map<String, String> DIM_COL = Map.of(
@@ -50,6 +54,7 @@ public class CrossFilterController {
         return t;
     }
 
+    @ReportResponse
     @GetMapping
     public ResponseEntity<?> crossFilter(
             @RequestParam(required = false) String dateFrom,
@@ -70,15 +75,27 @@ public class CrossFilterController {
         filters.put("destination", csv(destinations));
         filters.put("mcc", csv(mccs));
 
-        Map<String, Object> dims = new LinkedHashMap<>();
-        for (String d : DIMS) {
-            dims.put(d, breakdown(tenantId, d, filters, hasRange, dateFrom, dateTo));
+        // Key on the parsed filters (not the raw CSV) and on the dates only when
+        // the range is actually applied. Control-char separators (RS between dims,
+        // US between values) keep values containing '=' or '|' unambiguous.
+        StringBuilder key = new StringBuilder("crossFilter:").append(tenantId).append(':')
+            .append(hasRange ? dateFrom + ".." + dateTo : "all");
+        for (Map.Entry<String, List<String>> e : filters.entrySet()) {
+            key.append('\u001e').append(e.getKey()).append('=').append(String.join("\u001f", e.getValue()));
         }
 
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("dimensions", dims);
-        resp.put("timeline", timeline(tenantId, filters, hasRange, dateFrom, dateTo));
-        resp.put("totals", totals(tenantId, filters, hasRange, dateFrom, dateTo));
+        Map<String, Object> resp = reportCache.get(ReportCacheConfig.CACHE_REPORT_DATA, key.toString(), () -> {
+            Map<String, Object> dims = new LinkedHashMap<>();
+            for (String d : DIMS) {
+                dims.put(d, breakdown(tenantId, d, filters, hasRange, dateFrom, dateTo));
+            }
+
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("dimensions", dims);
+            r.put("timeline", timeline(tenantId, filters, hasRange, dateFrom, dateTo));
+            r.put("totals", totals(tenantId, filters, hasRange, dateFrom, dateTo));
+            return r;
+        });
         return ResponseEntity.ok(resp);
     }
 

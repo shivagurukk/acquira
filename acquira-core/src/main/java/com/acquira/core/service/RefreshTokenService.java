@@ -134,6 +134,7 @@ public class RefreshTokenService {
     }
 
     /** Cleanup expired tokens (runs daily) */
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "core-refresh-token-cleanup", lockAtLeastFor = "PT1M")
     @Scheduled(cron = "0 0 3 * * *")
     public void cleanupExpiredTokens() {
         try {

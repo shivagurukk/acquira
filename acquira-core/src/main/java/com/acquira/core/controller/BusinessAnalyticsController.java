@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.ReportResponse;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.VolumeRevenueRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,12 +31,12 @@ public class BusinessAnalyticsController {
 
     /** Serializes the resolved filter DTO into a stable cache-key suffix. */
     @Autowired
-    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private tools.jackson.databind.ObjectMapper objectMapper;
 
     private String filterKey(VolumeRevenueFilterDTO filters) {
         try {
             return objectMapper.writeValueAsString(filters);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (tools.jackson.core.JacksonException e) {
             // Unkeyable filters just mean an uncached (direct) execution.
             return null;
         }
@@ -86,7 +87,7 @@ public class BusinessAnalyticsController {
                 VolumeRevenueFilterDTO filters;
                 try {
                     filters = objectMapper.readValue(template, VolumeRevenueFilterDTO.class);
-                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                } catch (tools.jackson.core.JacksonException e) {
                     return;
                 }
                 resolveFilters(filters);
@@ -95,10 +96,18 @@ public class BusinessAnalyticsController {
                 if (fk == null) return;
                 reportCache.get(
                         com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                        "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
+                        "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk + todayKey(filters),
                         () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
             }
         });
+    }
+
+    /**
+     * The attrition repository defaults a null endDate to LocalDate.now(), so a
+     * request without one must not share an entry across midnight.
+     */
+    private static String todayKey(VolumeRevenueFilterDTO filters) {
+        return filters.getEndDate() == null ? ":today=" + java.time.LocalDate.now() : "";
     }
 
     private void resolveFilters(VolumeRevenueFilterDTO filters) {
@@ -239,6 +248,7 @@ public class BusinessAnalyticsController {
      * render as +100%. Mirrors the {rows, meta} shape of /retention-report.
      */
     @PreAuthorize("@menuAccess.canAccess('/business/attrition')")
+    @ReportResponse
     @PostMapping("/attrition-report-with-meta")
     public Map<String, Object> getAttritionReportWithMeta(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -261,7 +271,7 @@ public class BusinessAnalyticsController {
         }
         return reportCache.get(
                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
+                "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk + todayKey(filters),
                 () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
     }
 
@@ -307,6 +317,7 @@ public class BusinessAnalyticsController {
     // Placeholder for filter options (dropdowns)
     // Deliberately UNGATED: called by the shared Layout/filter components on
     // every screen — gating it would break the whole app for non-admin users.
+    @ReportResponse
     @GetMapping("/filter-options")
     public Map<String, List<String>> getFilterOptions() {
         // Pass tenant context so dropdown lists are scoped to the user's tenant.
@@ -331,6 +342,7 @@ public class BusinessAnalyticsController {
      */
     // Deliberately UNGATED: called by the shared Layout/filter components on
     // every screen — gating it would break the whole app for non-admin users.
+    @ReportResponse
     @GetMapping("/data-bounds")
     public Map<String, Object> getDataBounds() {
         // Delegated to DataBoundsService: same fact-first/insight-fallback

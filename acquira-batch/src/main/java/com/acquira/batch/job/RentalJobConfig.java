@@ -2,16 +2,16 @@ package com.acquira.batch.job;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
+import org.springframework.batch.core.job.Job;
+import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.batch.infrastructure.item.ItemProcessor;
+import org.springframework.batch.infrastructure.item.ItemWriter;
+import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -134,7 +134,7 @@ public class RentalJobConfig {
 
     @Bean
     public Step ingestRentalStep(
-            @org.springframework.beans.factory.annotation.Qualifier("rentalFileReader") org.springframework.batch.item.ItemStreamReader<RentalRow> rentalFileReader,
+            @org.springframework.beans.factory.annotation.Qualifier("rentalFileReader") org.springframework.batch.infrastructure.item.ItemStreamReader<RentalRow> rentalFileReader,
             @org.springframework.beans.factory.annotation.Qualifier("rentalTenantProcessor") ItemProcessor<RentalRow, RentalRow> rentalTenantProcessor,
             @org.springframework.beans.factory.annotation.Qualifier("rentalWriter") ItemWriter<RentalRow> rentalWriter) {
         return new StepBuilder("ingestRentalStep", jobRepository)
@@ -155,7 +155,7 @@ public class RentalJobConfig {
 
     @Bean
     @StepScope
-    public org.springframework.batch.item.ItemStreamReader<RentalRow> rentalFileReader(
+    public org.springframework.batch.infrastructure.item.ItemStreamReader<RentalRow> rentalFileReader(
             @Value("#{jobParameters['fullPath']}") String fullPath) {
         ExcelItemReader<RentalRow> reader = new ExcelItemReader<>();
         reader.setResource(new FileSystemResource(fullPath));

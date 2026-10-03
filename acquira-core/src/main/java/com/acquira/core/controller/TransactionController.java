@@ -50,7 +50,7 @@ public class TransactionController {
     private CurrencyMeta currencyMeta;
 
     @GetMapping
-    public ResponseEntity<Page<Transaction>> getTransactions(
+    public ResponseEntity<Page<Map<String, Object>>> getTransactions(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String mid,
@@ -70,7 +70,10 @@ public class TransactionController {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "paymentDate"));
         Page<Transaction> result = transactionRepository.findAll(spec, pageable);
-        return ResponseEntity.ok(result);
+        // Same masked DTO rows as /keyset. Serializing the entity page failed on
+        // the lazy merchant proxy (HTTP 500) and would have sent card_number raw.
+        return ResponseEntity.ok(new org.springframework.data.domain.PageImpl<>(
+                toDtos(result.getContent()), pageable, result.getTotalElements()));
     }
 
     // ============================================================
@@ -159,7 +162,24 @@ public class TransactionController {
         // three lazy @ManyToOnes per row → up to 3×pageSize extra queries under
         // open-in-view, and (b) card_number went out RAW — the CSV path masked
         // it but the JSON path did not. Names are now resolved with three
-        // batched lookups and the PAN is masked here.
+        // batched lookups and the PAN is masked here (toDtos).
+        List<Map<String, Object>> dtos = toDtos(content);
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("content", dtos);
+        body.put("hasMore", hasMore);
+        if (!content.isEmpty()) {
+            Transaction last = content.get(content.size() - 1);
+            body.put("nextCursorDate", last.getPaymentDate());
+            body.put("nextCursorId", last.getTransactionId());
+        } else {
+            body.put("nextCursorDate", null);
+            body.put("nextCursorId", null);
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    private List<Map<String, Object>> toDtos(List<Transaction> content) {
         Map<Long, Merchant> merchantsById = new HashMap<>();
         Map<Long, Store> storesById = new HashMap<>();
         Map<Long, Terminal> terminalsById = new HashMap<>();
@@ -198,19 +218,7 @@ public class TransactionController {
             d.put("destination", t.getDestination());
             dtos.add(d);
         }
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("content", dtos);
-        body.put("hasMore", hasMore);
-        if (!content.isEmpty()) {
-            Transaction last = content.get(content.size() - 1);
-            body.put("nextCursorDate", last.getPaymentDate());
-            body.put("nextCursorId", last.getTransactionId());
-        } else {
-            body.put("nextCursorDate", null);
-            body.put("nextCursorId", null);
-        }
-        return ResponseEntity.ok(body);
+        return dtos;
     }
 
     private static String nzs(String s) { return s == null ? "" : s; }

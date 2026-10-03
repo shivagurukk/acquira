@@ -26,6 +26,24 @@ public class GroupAnalyticsController {
     @PersistenceContext
     private EntityManager entityManager;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private tools.jackson.databind.ObjectMapper objectMapper;
+
+    /** Report types both endpoints accept (validated before the cache lookup). */
+    private static final java.util.Set<String> GROUP_TYPES =
+            java.util.Set.of("MCC", "MERCHANT", "SALES", "SALES_EMAIL", "REFERRAL", "REFERRAL_PARTNER");
+
+    private String filterKey(VolumeRevenueFilterDTO filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (tools.jackson.core.JacksonException e) {
+            return null;
+        }
+    }
+
     // Shared SELECT fragment for every grouping type (MCC/MERCHANT/SALES/REFERRAL).
     // All four ultimately query sum_daily_merchant aliased "s" (the MCC branch
     // joins dim_store on top of it), so the same metric set applies everywhere.
@@ -49,7 +67,7 @@ public class GroupAnalyticsController {
      * period: TODAY, MONTH, YEAR, CUSTOM
      */
     @GetMapping("/{type}")
-    @SuppressWarnings("unchecked")
+    @com.acquira.common.config.ReportResponse
     public ResponseEntity<?> getGroupReport(
             @PathVariable String type,
             @RequestParam(required = false) String period, // TODAY, MONTH, YEAR, PY (Previous Year)
@@ -87,6 +105,19 @@ public class GroupAnalyticsController {
             end = now;
         }
 
+        String reportType = type.toUpperCase();
+        if (!GROUP_TYPES.contains(reportType))
+            return ResponseEntity.badRequest().body("Invalid Report Type");
+
+        // Dates default from LocalDate.now(), so the RESOLVED range is keyed.
+        final LocalDate from = start, to = end;
+        String key = "groupReport:" + tenantId + ":" + reportType + ":" + from + ".." + to;
+        return ResponseEntity.ok(reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> groupReportRows(reportType, tenantId, from, to)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> groupReportRows(String type, Long tenantId, LocalDate start, LocalDate end) {
         String sql = "";
         String groupBy = "";
         String selectClause = "";
@@ -122,7 +153,8 @@ public class GroupAnalyticsController {
                 groupBy = "GROUP BY COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id), COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') ";
                 break;
             default:
-                return ResponseEntity.badRequest().body("Invalid Report Type");
+                // Unreachable: GROUP_TYPES is checked before the cache lookup.
+                throw new IllegalArgumentException("Invalid Report Type");
         }
 
         String finalSql = "SELECT " + selectClause +
@@ -174,7 +206,7 @@ public class GroupAnalyticsController {
 
         List<Object[]> results = query.getResultList();
 
-        return ResponseEntity.ok(buildEnrichedResponse(results));
+        return buildEnrichedResponse(results);
     }
 
     /**
@@ -187,15 +219,15 @@ public class GroupAnalyticsController {
      * working; new UI calls hit POST and gets the drawer fields applied.
      */
     @PostMapping("/{type}/filtered")
-    @SuppressWarnings("unchecked")
+    @com.acquira.common.config.ReportResponse
     public ResponseEntity<?> getGroupReportFiltered(
             @PathVariable String type,
-            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+            @RequestBody(required = false) VolumeRevenueFilterDTO body) {
 
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null)
             return ResponseEntity.badRequest().build();
-        if (filter == null) filter = new VolumeRevenueFilterDTO();
+        final VolumeRevenueFilterDTO filter = body != null ? body : new VolumeRevenueFilterDTO();
 
         // Date defaulting: same logic as the GET endpoint — if the caller
         // didn't provide explicit dates, default to MTD.
@@ -203,6 +235,21 @@ public class GroupAnalyticsController {
         LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : now.withDayOfMonth(1);
         LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : now;
 
+        String reportType = type.toUpperCase();
+        if (!GROUP_TYPES.contains(reportType))
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid Report Type: " + type));
+
+        // Resolved (MTD-defaulted) range + the full drawer body are keyed.
+        String fk = filterKey(filter);
+        if (fk == null) return ResponseEntity.ok(groupReportFilteredRows(reportType, tenantId, filter, start, end));
+        String key = "groupReportFiltered:" + tenantId + ":" + reportType + ":" + start + ".." + end + ":" + fk;
+        return ResponseEntity.ok(reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> groupReportFilteredRows(reportType, tenantId, filter, start, end)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> groupReportFilteredRows(String type, Long tenantId,
+            VolumeRevenueFilterDTO filter, LocalDate start, LocalDate end) {
         // Build the SELECT/FROM/GROUP BY based on report type.
         String selectClause;
         String fromClause;
@@ -251,7 +298,8 @@ public class GroupAnalyticsController {
                 needMerchant = true;
                 break;
             default:
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid Report Type: " + type));
+                // Unreachable: GROUP_TYPES is checked before the cache lookup.
+                throw new IllegalArgumentException("Invalid Report Type: " + type);
         }
 
         // Add joins required by drawer filters even if the base report doesn't
@@ -323,7 +371,7 @@ public class GroupAnalyticsController {
         query.setMaxResults(500); // higher cap than legacy GET (was 100); UI virtualizes.
 
         List<Object[]> results = query.getResultList();
-        return ResponseEntity.ok(buildEnrichedResponse(results));
+        return buildEnrichedResponse(results);
     }
 
     /**

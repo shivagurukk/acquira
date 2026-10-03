@@ -51,6 +51,7 @@ public class ScheduledDbPullJob {
      * Runs daily at 02:00 AM — but only when
      * acquira.scheduler.daily-ingestion.enabled=true. Disabled by default.
      */
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "batch-daily-db-pull", lockAtLeastFor = "PT1M")
     @Scheduled(cron = "0 0 2 * * ?") // 2 AM Daily
     @Transactional
     public void runDailyIngestion() {

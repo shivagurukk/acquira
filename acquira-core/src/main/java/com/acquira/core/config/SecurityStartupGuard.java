@@ -17,6 +17,9 @@ import java.util.Arrays;
  *  - JWT secret must be at least 32 characters.
  *  - Warns about other insecure defaults in prod.
  */
+// Every pod verifies JWTs with the same secret, so every pod must refuse the
+// placeholder — not just the one that issues them.
+@com.acquira.common.config.LoadInRoles({"pdf", "batch"})
 @Configuration
 public class SecurityStartupGuard {
 
@@ -33,9 +36,6 @@ public class SecurityStartupGuard {
 
     @Value("${jwt.secret:AcquiraDefaultDevKeyAtLeast32Chars!!}")
     private String jwtSecret;
-
-    @Value("${external.api.key:}")
-    private String externalApiKey;
 
     @Value("${spring.datasource.password:}")
     private String dbPassword;
@@ -80,11 +80,6 @@ public class SecurityStartupGuard {
             } else {
                 log.warn("⚠ JWT secret is shorter than 32 characters. Use a longer key.");
             }
-        }
-
-        // ── External API Key ────────────────────────────────────────
-        if (isProd && (externalApiKey == null || externalApiKey.isBlank())) {
-            log.warn("⚠ No external.api.key configured — external report API will reject all requests.");
         }
 
         // ── Database Password ───────────────────────────────────────

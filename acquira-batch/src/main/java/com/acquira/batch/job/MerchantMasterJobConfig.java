@@ -1,17 +1,17 @@
 package com.acquira.batch.job;
 
 import com.acquira.common.model.StagingMerchant;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
+import org.springframework.batch.core.job.Job;
+import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.batch.infrastructure.item.ItemProcessor;
+import org.springframework.batch.infrastructure.item.ItemReader;
+import org.springframework.batch.infrastructure.item.ItemWriter;
+import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -177,7 +177,7 @@ public class MerchantMasterJobConfig {
 
     @Bean
     @StepScope
-    public org.springframework.batch.item.ItemStreamReader<StagingMerchant> merchantExcelReader(
+    public org.springframework.batch.infrastructure.item.ItemStreamReader<StagingMerchant> merchantExcelReader(
             @Value("#{jobParameters['fullPath']}") String fullPath) {
         ExcelItemReader<StagingMerchant> reader = new ExcelItemReader<>();
         reader.setResource(new FileSystemResource(fullPath));
@@ -564,7 +564,7 @@ public class MerchantMasterJobConfig {
         return (contribution, chunkContext) -> {
             String tId = String.valueOf(tenantId);
             long stepStart = System.currentTimeMillis();
-            org.springframework.batch.core.JobExecution jobExecution =
+            org.springframework.batch.core.job.JobExecution jobExecution =
                 chunkContext.getStepContext().getStepExecution().getJobExecution();
             // dbPullMerchantJob runs this same step without a file, so fullPath
             // is legitimately null there.

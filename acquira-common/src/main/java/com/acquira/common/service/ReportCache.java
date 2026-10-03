@@ -37,11 +37,15 @@ public class ReportCache {
     /** Provider, not a direct dependency: ReportCacheWarmup itself must be
      *  constructible without ReportCache, and test slices may omit it. */
     private final org.springframework.beans.factory.ObjectProvider<ReportCacheWarmup> warmup;
+    /** Cross-pod signal; a provider for the same reason as warmup. */
+    private final org.springframework.beans.factory.ObjectProvider<ReportCacheSync> sync;
 
     public ReportCache(CacheManager cacheManager,
-            org.springframework.beans.factory.ObjectProvider<ReportCacheWarmup> warmup) {
+            org.springframework.beans.factory.ObjectProvider<ReportCacheWarmup> warmup,
+            org.springframework.beans.factory.ObjectProvider<ReportCacheSync> sync) {
         this.cacheManager = cacheManager;
         this.warmup = warmup;
+        this.sync = sync;
     }
 
     @SuppressWarnings("unchecked")
@@ -62,17 +66,48 @@ public class ReportCache {
     }
 
     /**
-     * Drop every report cache. Call after any write that changes what a cached
-     * report would show but does not go through the batch jobs' eviction
-     * listener — e.g. admin edits to sales hierarchy/targets. Full clear, not
-     * key-targeted: these writes are rare and repopulation is one query per
-     * screen, so precision isn't worth the bug surface.
+     * Drop every report cache for every tenant. For writes whose tenant is
+     * unknown or that change data shared by all tenants (reference tables,
+     * bulk migration). Prefer {@link #evict(String, Long)} when the tenant is
+     * known.
      */
     public void evictAll() {
+        evict("evictAll", null);
+    }
+
+    /**
+     * The ONE eviction entry point: drops this JVM's entries that may depend on
+     * {@code tenantId}'s data (see TenantScopedCache#evictTenant), warms that
+     * tenant first, and signals every other instance (core / pdf / batch pods)
+     * to do the same via {@link ReportCacheSync}. Other tenants stay warm.
+     * {@code tenantId == null} means "unknown / all tenants" — a full clear.
+     * Clearing the CacheManager directly only reaches the local JVM.
+     */
+    public void evict(String reason, Long tenantId) {
+        if (tenantId == null) clearAll(cacheManager);
+        else clearTenant(cacheManager, tenantId);
+        warmup.ifAvailable(w -> w.requestWarm(reason, tenantId));
+        sync.ifAvailable(s -> s.signal(tenantId));
+    }
+
+    /** Local clear only — no warm, no cross-instance signal. */
+    static void clearAll(CacheManager cacheManager) {
         for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
             Cache cache = cacheManager.getCache(name);
             if (cache != null) cache.clear();
         }
-        warmup.ifAvailable(w -> w.requestWarm("evictAll"));
+    }
+
+    /**
+     * Local, one-tenant clear — no warm, no signal. A cache that is not a
+     * TenantScopedCache (a test double, a future manager) is cleared whole:
+     * over-evicting costs a cold load, under-evicting serves stale data.
+     */
+    static void clearTenant(CacheManager cacheManager, Long tenantId) {
+        for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
+            Cache cache = cacheManager.getCache(name);
+            if (cache instanceof com.acquira.common.config.TenantScopedCache scoped) scoped.evictTenant(tenantId);
+            else if (cache != null) cache.clear();
+        }
     }
 }

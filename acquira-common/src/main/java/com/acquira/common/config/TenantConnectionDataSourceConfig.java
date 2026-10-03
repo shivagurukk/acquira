@@ -25,8 +25,8 @@ import java.sql.SQLException;
  * endpoints run raw {@code JdbcTemplate} / {@code EntityManager} queries
  * DIRECTLY from the controller and are therefore NOT advised:
  * DataExplorerController, AnalyticsExplorerController, CrossFilterController,
- * GroupAnalyticsController, AiQueryService's guarded-execution callback, and
- * ApiKeyController. On those paths the GUC was never set, so if
+ * GroupAnalyticsController and AiQueryService's guarded-execution callback.
+ * On those paths the GUC was never set, so if
  * {@code FORCE ROW LEVEL SECURITY} were applied, {@code get_current_tenant()}
  * would be null and every one of those endpoints would return ZERO rows.
  *
