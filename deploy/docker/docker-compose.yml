@@ -36,9 +36,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/postgres
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: postgres
-      # For local dev you can flip init mode ON so schema.sql auto-runs and you
-      # skip the separate migration step. Remove this on AWS (prod = never).
-      SPRING_SQL_INIT_MODE: always
+      # "never" by default: "always" re-runs schema.sql (DROPs + re-seed) on every
+      # start and would wipe a database that has data. For a brand-new, EMPTY
+      # local database only, opt in for one run:
+      #   SQL_INIT_MODE=always docker compose -f deploy/docker/docker-compose.yml up
+      SPRING_SQL_INIT_MODE: ${SQL_INIT_MODE:-never}
       JWT_SECRET_KEY: "local-dev-only-change-me-32bytes-min"
       APP_ENCRYPTION_KEY: "local-dev-only-32-byte-aes-key!!"   # MUST stay stable
     ports:
