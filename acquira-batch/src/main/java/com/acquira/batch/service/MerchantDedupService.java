@@ -35,6 +35,12 @@ import java.util.Map;
  *                                 reported, because a later master upload would
  *                                 recreate them anyway
  *
+ * SID RULE (placeholders the MID rule cannot reach, e.g. 'AUTO_MID_&lt;sid&gt;' minted
+ * for a feed row with no MID): when every store of an AUTO_ merchant carries a
+ * sid that the master lists under one and the same non-AUTO merchant, the
+ * placeholder merges into that merchant. Any store without such a match, or
+ * sids spread over several master merchants, leaves the placeholder untouched.
+ *
  * MERGE (one transaction):
  *   1. a placeholder store whose sid already exists under the canonical merchant
  *      is folded into that store (every store_id reference repointed), then deleted
@@ -54,18 +60,40 @@ public class MerchantDedupService {
 
     /** dup → canonical for one tenant; AUTO_ = internal_id prefix of auto-created placeholders. */
     private static final String MAP_SQL =
-        "WITH g AS ( " +
+        "WITH p AS (SELECT CAST(? AS BIGINT) AS tid), " +
+        "g AS ( " +
         "  SELECT m.mid, m.merchant_id, m.internal_id LIKE 'AUTO\\_%' AS is_auto " +
-        "  FROM dim_merchant m " +
-        "  WHERE m.tenant_id = ? AND NULLIF(TRIM(m.mid), '') IS NOT NULL AND m.mid NOT LIKE 'AUTO\\_MID\\_%' " +
+        "  FROM dim_merchant m JOIN p ON m.tenant_id = p.tid " +
+        "  WHERE NULLIF(TRIM(m.mid), '') IS NOT NULL AND m.mid NOT LIKE 'AUTO\\_MID\\_%' " +
         "), k AS ( " +
         "  SELECT mid, COUNT(*) FILTER (WHERE NOT is_auto) AS real_cnt, " +
         "         COALESCE(MIN(merchant_id) FILTER (WHERE NOT is_auto), MIN(merchant_id)) AS canon_id " +
         "  FROM g GROUP BY mid HAVING COUNT(*) > 1 " +
+        "), by_mid AS ( " +
+        "  SELECT g.merchant_id AS dup_id, k.canon_id " +
+        "  FROM g JOIN k ON k.mid = g.mid " +
+        "  WHERE k.real_cnt <= 1 AND g.is_auto AND g.merchant_id <> k.canon_id " +
+        // SID rule: the feed sent no MID (or a different one), so the placeholder
+        // can only be matched through its stores' sids.
+        "), by_sid AS ( " +
+        "  SELECT am.merchant_id AS dup_id, MIN(rs.merchant_id) AS canon_id " +
+        "  FROM dim_merchant am JOIN p ON am.tenant_id = p.tid " +
+        "  JOIN dim_store ast ON ast.tenant_id = am.tenant_id AND ast.merchant_id = am.merchant_id " +
+        "  LEFT JOIN LATERAL ( " +
+        "    SELECT DISTINCT s.merchant_id FROM dim_store s " +
+        "    JOIN dim_merchant rm ON rm.tenant_id = s.tenant_id AND rm.merchant_id = s.merchant_id " +
+        "    WHERE s.tenant_id = ast.tenant_id AND s.sid = ast.sid AND rm.internal_id NOT LIKE 'AUTO\\_%' " +
+        "  ) rs ON TRUE " +
+        "  WHERE am.internal_id LIKE 'AUTO\\_%' " +
+        "  GROUP BY am.merchant_id " +
+        "  HAVING COUNT(DISTINCT rs.merchant_id) = 1 AND BOOL_AND(rs.merchant_id IS NOT NULL) " +
         ") " +
-        "SELECT g.merchant_id AS dup_id, k.canon_id " +
-        "FROM g JOIN k ON k.mid = g.mid " +
-        "WHERE k.real_cnt <= 1 AND g.is_auto AND g.merchant_id <> k.canon_id";
+        "SELECT dup_id, canon_id FROM by_mid " +
+        "UNION ALL " +
+        // A placeholder that is itself the canonical row of a MID group waits for
+        // the next run: its own duplicates must fold into it first.
+        "SELECT s.dup_id, s.canon_id FROM by_sid s " +
+        "WHERE NOT EXISTS (SELECT 1 FROM by_mid b WHERE b.dup_id = s.dup_id OR b.canon_id = s.dup_id)";
 
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate tx;

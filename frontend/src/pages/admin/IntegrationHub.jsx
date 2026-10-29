@@ -34,7 +34,7 @@ import {
 // accepts it back to mean "leave the existing ciphertext alone".
 const PASSWORD_SENTINEL = '__UNCHANGED__';
 
-const REPORT_TYPE_TONES = { MERCHANT: 'brand', TRANSACTION: 'success', RENTAL: 'warning' };
+const REPORT_TYPE_TONES = { MERCHANT: 'brand', TRANSACTION: 'success', RENTAL: 'warning', FX_RATE: 'info' };
 const DB_TYPE_TONES = { ORACLE: 'warning', POSTGRES: 'info', MSSQL: 'brand' };
 // StatusBadge maps RETRYING to neutral, which loses the "still working" signal,
 // so run status keeps an explicit tone map.
@@ -932,6 +932,7 @@ const ReportsTab = () => {
     { key: 'TRANSACTION', label: 'Transaction', count: reports.filter((r) => r.reportType === 'TRANSACTION').length },
     { key: 'RENTAL', label: 'Rental', count: reports.filter((r) => r.reportType === 'RENTAL').length },
     { key: 'DCC', label: 'DCC Revenue', count: reports.filter((r) => r.reportType === 'DCC').length },
+    { key: 'FX_RATE', label: 'FX Rates', count: reports.filter((r) => r.reportType === 'FX_RATE').length },
   ];
 
   return (
@@ -994,6 +995,7 @@ const ReportsTab = () => {
                   { value: 'TRANSACTION', label: 'Transaction' },
                   { value: 'RENTAL', label: 'Rental' },
                   { value: 'DCC', label: 'DCC Revenue' },
+                  { value: 'FX_RATE', label: 'FX Rates (daily USD rate)' },
                 ]}
               />
             </FormField>

@@ -17,6 +17,7 @@ import {
     setDefaultCurrency, setDisplayMode, getDisplayMode,
     formatCurrency, formatCompactCurrency, formatMsf, formatPercent, createFmt,
     convertForDisplay, displayCurrencyCode, isUsdDisplay, usdRateInfo,
+    setFxSeries, setDefaultFxSeries, restoreDefaultFxSeries, fxRateForRange,
 } from '../utils/formatters';
 import { USD_PER_UNIT, FX_RATE_AS_OF } from '../config/fxRates';
 
@@ -102,7 +103,7 @@ describe('USD mode converts, relabels and renders 2dp', () => {
         expect(displayCurrencyCode('BHD')).toBe('USD');
         expect(isUsdDisplay('BHD')).toBe(true);
         const fx = usdRateInfo('BHD');
-        expect(fx).toEqual({ base: 'BHD', rate: BHD_RATE, asOf: FX_RATE_AS_OF });
+        expect(fx).toMatchObject({ base: 'BHD', rate: BHD_RATE, asOf: FX_RATE_AS_OF, method: 'PEG', floating: false });
     });
 
     it('never converts percentages or counts', () => {
@@ -142,5 +143,85 @@ describe('USD mode fail-safes', () => {
         expect(formatCurrency(100)).toBe('$265.25');
         setDisplayMode('LOCAL');
         expect(norm(formatCurrency(100))).toBe('BHD 100.000');
+    });
+});
+
+/* ── Floating currency (EGP): dated series from GET /api/fx/series ───────
+   No constant exists for EGP. Until a series is loaded nothing converts (and
+   nothing is relabelled); with one loaded, a date converts at that day's
+   rate, a range at the volume-weighted rate of its days, and the overall
+   effective rate applies when no date is given. */
+describe('floating currency converts from the dated series', () => {
+    const series = {
+        base: 'EGP', quote: 'USD', floating: true,
+        days: [
+            // 1 USD = 50 EGP on the 1st, = 40 EGP on the 2nd (carried to the 3rd)
+            { date: '2026-10-01', rateDate: '2026-10-01', unitsPerUsd: 50, usdPerUnit: 0.02,  staleDays: 0, volume: 1000 },
+            { date: '2026-10-02', rateDate: '2026-10-02', unitsPerUsd: 40, usdPerUnit: 0.025, staleDays: 0, volume: 3000 },
+            { date: '2026-10-03', rateDate: '2026-10-02', unitsPerUsd: 40, usdPerUnit: 0.025, staleDays: 1, volume: 0 },
+        ],
+        effective: { usdPerUnit: 0.02375, unitsPerUsd: 42.105263, method: 'VOLUME_WEIGHTED',
+                     from: '2026-10-01', to: '2026-10-03', lastRateDate: '2026-10-02' },
+        latest: { rateDate: '2026-10-02', unitsPerUsd: 40, usdPerUnit: 0.025, source: 'MPS_SEED' },
+    };
+    beforeEach(() => {
+        setDefaultCurrency('EGP', 2, 'EGP');
+        setDisplayMode('USD');
+        setDefaultFxSeries(null);
+        setFxSeries(null);
+    });
+    afterEach(() => { setDefaultFxSeries(null); setFxSeries(null); setDisplayMode('LOCAL'); });
+
+    it('does not convert or relabel before a series is loaded', () => {
+        expect(isUsdDisplay()).toBe(false);
+        expect(displayCurrencyCode()).toBe('EGP');
+        expect(convertForDisplay(100)).toBe(100);
+        expect(norm(formatCurrency(100))).toBe('EGP 100.00');
+        expect(usdRateInfo()).toBeNull();
+    });
+
+    it('uses the day rate for a date and the volume-weighted rate for a range', () => {
+        setFxSeries(series);
+        expect(isUsdDisplay()).toBe(true);
+        expect(displayCurrencyCode()).toBe('USD');
+        // 100 EGP on the 1st at 0.02 → $2; on the 3rd (carried from the 2nd) at 0.025 → $2.50
+        expect(convertForDisplay(100, 'EGP', '2026-10-01')).toBeCloseTo(2, 10);
+        expect(convertForDisplay(100, 'EGP', '2026-10-03')).toBeCloseTo(2.5, 10);
+        // Range 1st–2nd: (1000*0.02 + 3000*0.025)/4000 = 0.02375
+        expect(fxRateForRange({ from: '2026-10-01', to: '2026-10-02' })).toBeCloseTo(0.02375, 12);
+        // The 3rd has no volume → excluded from the weight; the weighted rate stands
+        expect(fxRateForRange({ from: '2026-10-01', to: '2026-10-03' })).toBeCloseTo(0.02375, 12);
+        // A range with no volume at all falls back to the simple average of its days
+        expect(fxRateForRange({ from: '2026-10-03', to: '2026-10-03' })).toBeCloseTo(0.025, 12);
+        // A range outside the series yields nothing → falls back to the effective rate
+        expect(fxRateForRange({ from: '2026-09-01', to: '2026-09-02' })).toBeCloseTo(0.02375, 12);
+        // No date → the series' overall effective rate
+        expect(convertForDisplay(100)).toBeCloseTo(2.375, 10);
+        expect(formatCurrency(100)).toBe('$2.38');
+    });
+
+    it('reports provenance with the real rate dates used', () => {
+        setFxSeries(series);
+        const info = usdRateInfo('EGP', { from: '2026-10-01', to: '2026-10-03' });
+        expect(info).toMatchObject({ base: 'EGP', floating: true, method: 'VOLUME_WEIGHTED',
+            from: '2026-10-01', to: '2026-10-03', daysExact: 2, daysCarried: 1, daysMissing: 0, maxStaleDays: 1,
+            asOf: '2026-10-02' });
+        expect(info.unitsPerUsd).toBeCloseTo(42.105263, 4);
+    });
+
+    it('falls back to the Layout default series and restores it after a page range', () => {
+        setDefaultFxSeries(series);
+        expect(isUsdDisplay()).toBe(true);
+        const pageSeries = { ...series, effective: { ...series.effective, usdPerUnit: 0.02 } };
+        setFxSeries(pageSeries);
+        expect(convertForDisplay(100)).toBeCloseTo(2, 10);
+        restoreDefaultFxSeries();
+        expect(convertForDisplay(100)).toBeCloseTo(2.375, 10);
+    });
+
+    it('a series for another currency never converts this one', () => {
+        setFxSeries({ ...series, base: 'NGN' });
+        expect(isUsdDisplay()).toBe(false);
+        expect(convertForDisplay(100)).toBe(100);
     });
 });

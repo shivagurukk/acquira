@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Download, PackageOpen } from 'lucide-react';
 import api from '../../api/axios';
+import useFxSeries from '../../hooks/useFxSeries';
 import EmptyState from '../../components/EmptyState';
 import MidSidSummary from '../../components/MidSidSummary';
 import { useAuth } from '../../contexts/AuthContext';
@@ -82,6 +83,14 @@ const ProductSummary = () => {
     const [months, setMonths] = useState([]);
     const [latest, setLatest] = useState('');
     const [month, setMonth] = useState('');
+    // Executive USD toggle: this month's daily rates (see useFxSeries).
+    const fxRange = useMemo(() => {
+        if (!/^\d{4}-\d{2}$/.test(month || '')) return null;
+        const [y, m] = month.split('-').map(Number);
+        const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+    }, [month]);
+    useFxSeries(fxRange);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);

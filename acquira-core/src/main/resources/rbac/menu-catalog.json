@@ -454,6 +454,7 @@
             "order": 14,
             "module": "business",
             "actions": [
+                "EDIT",
                 "EXPORT",
                 "VIEW"
             ],
@@ -852,6 +853,23 @@
             "name": "Product Summary",
             "path": "/executive/product-summary",
             "order": 9,
+            "module": "executive",
+            "actions": [
+                "EXPORT",
+                "VIEW"
+            ],
+            "category": "EXECUTIVE",
+            "grantView": [
+                "Bank Admin",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "executive.volume-revenue-mix",
+            "icon": "PieChart",
+            "name": "Volume & Revenue Mix",
+            "path": "/executive/volume-revenue-mix",
+            "order": 10,
             "module": "executive",
             "actions": [
                 "EXPORT",

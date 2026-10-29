@@ -16,6 +16,7 @@ const emptyTenant = {
     currencySymbol: '',
     baseCurrency: '',
     inputFormat: 'CMM',
+    cmmMinorDivisor: 0,
     homeCountryCode: '',
     cardTypeSource: 'FILE',
 };
@@ -23,6 +24,16 @@ const emptyTenant = {
 const INPUT_FORMATS = [
     { value: 'CMM', label: 'CMM — amounts in minor units (divided at ingest)' },
     { value: 'AMS', label: 'AMS — amounts already final decimals (no division)' },
+];
+
+// CMM-only: how many implied decimals the feed uses for the tenant's BASE
+// currency. 0 = default (the currency's own minor unit from ref_country).
+// Egypt: the processor sends EGP in milliemes (3 implied decimals) although
+// EGP displays with 2 — pick "3 decimals" so amounts divide by 1000.
+const CMM_DIVISORS = [
+    { value: 0, label: 'Default — the currency\'s own minor unit (AED/EGP ÷100, BHD ÷1000)' },
+    { value: 100, label: '2 implied decimals — divide by 100' },
+    { value: 1000, label: '3 implied decimals — divide by 1000' },
 ];
 
 const CARD_TYPE_SOURCES = [
@@ -254,6 +265,19 @@ const TenantManagement = ({ embedded = false }) => {
                             options={INPUT_FORMATS}
                         />
                     </FormField>
+
+                    {(currentTenant.inputFormat || 'CMM') === 'CMM' && (
+                        <FormField
+                            label="CMM implied decimals"
+                            hint="Only for the tenant's base currency. Default divides by the currency's own minor unit (EGP/AED 100, BHD 1000). Set 3 decimals when the processor's CMM file carries the base currency with three implied decimals (e.g. Egypt milliemes) — amounts divide by 1000 while reports keep the currency's normal precision. Foreign-currency transaction amounts always use their own currency's minor unit."
+                        >
+                            <Select
+                                value={currentTenant.cmmMinorDivisor ?? 0}
+                                onChange={e => setCurrentTenant({ ...currentTenant, cmmMinorDivisor: Number(e.target.value) })}
+                                options={CMM_DIVISORS}
+                            />
+                        </FormField>
+                    )}
 
                     <FormField
                         label="Card product/type source"

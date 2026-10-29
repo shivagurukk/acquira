@@ -17,12 +17,15 @@ public class BankController {
     private final TenantRepository tenantRepository;
     private final TenantService tenantService;
     private final com.acquira.core.service.TenantProvisioningService provisioningService;
+    private final com.acquira.core.service.RbacCatalogSync rbacSync;
 
     public BankController(TenantRepository tenantRepository, TenantService tenantService,
-            com.acquira.core.service.TenantProvisioningService provisioningService) {
+            com.acquira.core.service.TenantProvisioningService provisioningService,
+            com.acquira.core.service.RbacCatalogSync rbacSync) {
         this.tenantRepository = tenantRepository;
         this.tenantService = tenantService;
         this.provisioningService = provisioningService;
+        this.rbacSync = rbacSync;
     }
 
     @GetMapping
@@ -75,6 +78,7 @@ public class BankController {
             tenant.setInstitutionId("BANK-" + System.currentTimeMillis());
         }
         tenant.setInputFormat(normalizeInputFormat(tenant.getInputFormat()));
+        tenant.setCmmMinorDivisor(normalizeCmmMinorDivisor(tenant.getInputFormat(), tenant.getCmmMinorDivisor()));
         tenant.setCardTypeSource(normalizeCardTypeSource(tenant.getCardTypeSource()));
         tenant.setHomeCountryCode(normalizeCountryCode(tenant.getHomeCountryCode()));
         warnIfCountryCurrencyMismatch(tenant);
@@ -91,6 +95,10 @@ public class BankController {
             org.slf4j.LoggerFactory.getLogger(BankController.class)
                     .error("Tenant provisioning failed for tenant {}: {}", saved.getTenantId(), e.getMessage());
         }
+        // RBAC rows (groups, modules, grants) are per tenant and were only
+        // seeded at startup, so a tenant created here had no sidebar until the
+        // next restart. Seed them now; never throws.
+        rbacSync.resyncTenants(saved.getTenantId() == null ? null : saved.getTenantId().intValue());
         return ResponseEntity.ok(saved);
     }
 
@@ -110,6 +118,12 @@ public class BankController {
         // guard, a payload lacking cardTypeSource reset BIN -> FILE (2026-08-24).
         if (details.getInputFormat() != null && !details.getInputFormat().isBlank()) {
             tenant.setInputFormat(normalizeInputFormat(details.getInputFormat()));
+        }
+        // Absent (null) = payload predates the field, leave it alone. The UI sends
+        // 0 for "default (from currency)" so an explicit reset is distinguishable
+        // from an older client that simply doesn't know the field.
+        if (details.getCmmMinorDivisor() != null || "AMS".equals(tenant.getInputFormat())) {
+            tenant.setCmmMinorDivisor(normalizeCmmMinorDivisor(tenant.getInputFormat(), details.getCmmMinorDivisor()));
         }
         if (details.getCardTypeSource() != null && !details.getCardTypeSource().isBlank()) {
             tenant.setCardTypeSource(normalizeCardTypeSource(details.getCardTypeSource()));
@@ -159,6 +173,20 @@ public class BankController {
      */
     private static String normalizeInputFormat(String raw) {
         return "AMS".equalsIgnoreCase(raw == null ? "" : raw.trim()) ? "AMS" : "CMM";
+    }
+
+    /**
+     * CMM minor-unit divisor override for the tenant's base currency
+     * (V2026_10_25_01). Only powers of ten are meaningful; anything else, 0
+     * ("default" from the UI), or any value on an AMS tenant (which never
+     * divides) is stored as NULL = "use ref_country.decimal_notation_value".
+     */
+    private static Integer normalizeCmmMinorDivisor(String inputFormat, Integer raw) {
+        if (raw == null || "AMS".equalsIgnoreCase(inputFormat)) return null;
+        switch (raw) {
+            case 1: case 10: case 100: case 1000: case 10000: return raw;
+            default: return null;
+        }
     }
 
     /**

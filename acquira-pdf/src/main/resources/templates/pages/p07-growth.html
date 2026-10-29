@@ -136,25 +136,33 @@
                     <tbody>
                         <th:block th:if="${dto.demographics.quarterlyBreakdown != null and !dto.demographics.quarterlyBreakdown.isEmpty()}">
                         <!-- FIX UX: incomplete quarters (< 3 months) get amber background + badge.
-                             The quarterlyBreakdown LabeledValue uses value3 to carry the months count. -->
+                             quarterlyBreakdown: value = sales, value2 = txns, value3 = avg ticket,
+                             value4 = months of data. (This used to read value3, which is the avg
+                             ticket, so the PARTIAL badge never showed and a one-month quarter
+                             was used as the base of a three-digit growth figure.) -->
                         <tr th:each="q, iter : ${dto.demographics.quarterlyBreakdown}"
-                            th:style="${q.value3 != null and q.value3 &lt; 3 ? 'background: #FFFBEB;' : ''}">
+                            th:with="months=${q.value4 != null ? q.value4.intValue() : 3},
+                                     prevMonths=${iter.index > 0 and dto.demographics.quarterlyBreakdown[iter.index - 1].value4 != null ? dto.demographics.quarterlyBreakdown[iter.index - 1].value4.intValue() : 3}"
+                            th:style="${months &lt; 3 ? 'background: #FFFBEB;' : ''}">
                             <td style="font-weight: 700; padding: 5px 10px;" th:text="${q.label}">Q1</td>
                             <td style="font-weight: 700;" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(q.value, 1, 'COMMA', dto.currencyDecimals, 'POINT')}">0</td>
                             <td th:text="${q.value2 != null ? #numbers.formatDecimal(q.value2, 1, 'COMMA', 0, 'POINT') : '-'}">0</td>
                             <td th:if="${iter.index == 0}" style="color: #9CA3AF;">—</td>
-                            <td th:if="${iter.index > 0}" th:with="prevVal=${dto.demographics.quarterlyBreakdown[iter.index - 1].value}">
+                            <!-- Growth is only meaningful between two complete quarters. -->
+                            <td th:if="${iter.index > 0 and (months &lt; 3 or prevMonths &lt; 3)}" style="color: #9CA3AF;" title="Not comparable: one of the quarters is incomplete">—<sup>†</sup></td>
+                            <td th:if="${iter.index > 0 and months >= 3 and prevMonths >= 3}" th:with="prevVal=${dto.demographics.quarterlyBreakdown[iter.index - 1].value}">
                                 <th:block th:if="${prevVal.compareTo(T(java.math.BigDecimal).ZERO) > 0}" th:with="growth=${q.value.subtract(prevVal).multiply(new java.math.BigDecimal(100)).divide(prevVal, 1, T(java.math.RoundingMode).HALF_UP)}">
                                     <span th:style="${growth.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? 'color:#047857;font-weight:700' : 'color:#E87461;font-weight:700'}" th:text="${(growth.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? '+' : '') + growth + '%'}">0%</span>
                                 </th:block>
+                                <span th:if="${prevVal.compareTo(T(java.math.BigDecimal).ZERO) == 0}" style="color: #9CA3AF;">—</span>
                             </td>
                             <!-- FIX UX: status column — amber badge for incomplete, green tick for complete -->
                             <td>
-                                <span th:if="${q.value3 != null and q.value3 &lt; 3}"
+                                <span th:if="${months &lt; 3}"
                                       style="font-size: 7px; font-weight: 700; background: #FEF3C7; color: #92400E; padding: 1px 5px; border-radius: 3px;">
-                                    PARTIAL (<span th:text="${q.value3}">0</span>/3 mo)
+                                    PARTIAL (<span th:text="${months}">0</span>/3 mo)
                                 </span>
-                                <span th:if="${q.value3 == null or q.value3 >= 3}"
+                                <span th:if="${months >= 3}"
                                       style="font-size: 7px; color: #059669; font-weight: 700;">✓</span>
                             </td>
                         </tr>
@@ -168,6 +176,7 @@
                      style="padding: 3px 10px 5px 10px; font-size: 7.5px; color: #9CA3AF; font-style: italic;">
                     Q1 = Jan–Mar, Q2 = Apr–Jun, Q3 = Jul–Sep, Q4 = Oct–Dec.
                     <span style="color: #92400E;">Amber rows are incomplete quarters (fewer than 3 months of data).</span>
+                    <sup>†</sup> Growth is not shown where either quarter is incomplete, as the comparison would be misleading.
                 </div>
             </div>
         </div>

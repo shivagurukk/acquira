@@ -109,6 +109,8 @@
                 <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
                     The day and hour that generated the highest sales volume. Highlighted in gold on charts.
                     Use this to plan staffing, promotions, and inventory around your busiest periods.
+                    "Weekend" in this report means <span th:text="${dto.overview != null and dto.overview.weekendLabel != null ? dto.overview.weekendLabel : 'Friday &amp; Saturday'}">Friday &amp; Saturday</span>;
+                    all other days are weekdays.
                 </p>
             </div>
 
@@ -137,8 +139,8 @@
                 </div>
                 <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
                     When an international cardholder pays, DCC offers them the choice to pay in their home currency.
-                    When they opt in, you earn approximately 3% of the transaction value. The conversion rate measures how many
-                    eligible customers accept DCC.
+                    When they opt in, a share of the currency-conversion margin is paid to you at the rate set in your
+                    merchant agreement. The conversion rate measures how many eligible customers accept DCC.
                 </p>
             </div>
 

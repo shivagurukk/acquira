@@ -320,7 +320,7 @@ public class MerchantInsightService {
                 weekendDays, ccy.decimals()));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
-        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, ccy.code()));
+        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, ccy.code(), ccy.decimals()));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
         // FIX 1 (UNIQUE CUSTOMERS): the customers Kpi was previously sourced from
@@ -448,7 +448,7 @@ public class MerchantInsightService {
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
 
-        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, currencyCode));
+        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, currencyCode, ccyDecimals));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
         // FIX 1 (UNIQUE CUSTOMERS): override the customers Kpi using true distinct
@@ -517,10 +517,11 @@ public class MerchantInsightService {
         // doesn't divide total sales by an inflated customer count.
         BigDecimal totalSales = dto.getOverview().getSales() != null
                 ? dto.getOverview().getSales().getValue() : BigDecimal.ZERO;
-        BigDecimal newAvgSpend = safeDivide(totalSales, trueDistinct);
+        // Currency decimals, not a fixed 2: BHD 158.315 was printing as 158.310.
+        BigDecimal newAvgSpend = safeDivide(totalSales, trueDistinct, ccyDecimals);
         BigDecimal prevAvgSpend = (dto.getOverview().getPrevSales() != null && prevValue != null
                 && prevValue.compareTo(BigDecimal.ZERO) > 0)
-                ? safeDivide(dto.getOverview().getPrevSales().getValue(), prevValue)
+                ? safeDivide(dto.getOverview().getPrevSales().getValue(), prevValue, ccyDecimals)
                 : BigDecimal.ZERO;
         dto.getOverview().setAvgSpendPerCustomer(createKpi(newAvgSpend, prevAvgSpend, ccyDecimals));
 
@@ -742,6 +743,8 @@ public class MerchantInsightService {
                         ? calcWeekdayPct(trading.sales, weekendDays)
                         : calcWeekdayPct(currentRows, weekendDays)))
                 .peakDayName(trading != null ? peakDayFromArray(trading.sales) : findPeakDay(currentRows))
+                .weekendLabel(weekendLabel(weekendDays))
+                .weekendDayCount(weekendDays != null ? weekendDays.size() : 2)
                 .dailyAverage(dailyAvg)
                 .build();
     }
@@ -840,6 +843,24 @@ public class MerchantInsightService {
     }
 
     /** Weekday share of a Mon-first DOW volume array, per the tenant's weekend. */
+    /**
+     * Human label for the tenant's weekend, e.g. "Friday & Saturday" (BH/OM/EG)
+     * or "Saturday & Sunday" (AE), so the PDF can say which days it means
+     * instead of the hardcoded Sat–Sun that was wrong for Bahrain.
+     */
+    static String weekendLabel(java.util.Set<java.time.DayOfWeek> weekendDays) {
+        if (weekendDays == null || weekendDays.isEmpty()) return "Friday & Saturday";
+        // ISO order (Mon..Sun) reads naturally for both Fri+Sat and Sat+Sun.
+        List<java.time.DayOfWeek> days = new ArrayList<>(weekendDays);
+        java.util.Collections.sort(days);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < days.size(); i++) {
+            if (i > 0) sb.append(i == days.size() - 1 ? " & " : ", ");
+            sb.append(days.get(i).getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH));
+        }
+        return sb.toString();
+    }
+
     private BigDecimal calcWeekdayPct(BigDecimal[] dowSales, java.util.Set<java.time.DayOfWeek> weekendDays) {
         BigDecimal weekday = BigDecimal.ZERO, total = BigDecimal.ZERO;
         for (int i = 0; i < 7; i++) {
@@ -979,30 +1000,65 @@ public class MerchantInsightService {
 
     private List<ChartData> buildTxnSizeDistribution(
             List<com.acquira.common.model.SumDailyMerchantAttribute> attrs) {
+        // Band labels are config-driven per country (ticket_size_bucket): AE uses
+        // < 50 / 50-100 / ... / 5K+, BH uses < 5 / 5-10 / ... / 500+, EG its own.
+        // FIX (BH 2026-09 Insight PDF): this used to iterate a hardcoded AE label
+        // list, so every Bahrain band except the one label both countries share
+        // ("50-100") was silently dropped and the chart covered 14% of the month.
+        // Now every label the batch produced is kept, ordered by its lower bound.
         // '1K+' is the legacy top bucket kept for data aggregated before the
         // '1K-5K'/'5K+' split; the enhancer splits it by estimate only when present.
-        String[] bucketOrder = {"< 50", "50-100", "100-250", "250-500", "500-1K", "1K-5K", "5K+", "1K+"};
-        Map<String, long[]> buckets = new java.util.LinkedHashMap<>();
-        for (String b : bucketOrder) buckets.put(b, new long[]{0, 0});
+        // Volume is summed as BigDecimal: truncating each daily row to a whole
+        // unit (the old longValue()) lost up to 0.999 per day per band, so a
+        // BHD band printed ~15 fils below the real total over a 30-day month.
+        Map<String, long[]> counts = new java.util.LinkedHashMap<>();
+        Map<String, BigDecimal> volumes = new HashMap<>();
         long totalCount = 0;
         for (com.acquira.common.model.SumDailyMerchantAttribute a : attrs) {
-            if ("TXN_SIZE_BUCKET".equals(a.getAttributeType())) {
-                long[] v = buckets.computeIfAbsent(a.getAttributeValue(), k -> new long[]{0, 0});
-                v[0] += a.getMetricCount();
-                v[1] += a.getMetricVolume() != null ? a.getMetricVolume().longValue() : 0;
+            if ("TXN_SIZE_BUCKET".equals(a.getAttributeType()) && a.getAttributeValue() != null) {
+                String label = a.getAttributeValue().trim();
+                counts.computeIfAbsent(label, k -> new long[]{0})[0] += a.getMetricCount();
+                volumes.merge(label, a.getMetricVolume() != null ? a.getMetricVolume() : BigDecimal.ZERO, BigDecimal::add);
                 totalCount += a.getMetricCount();
             }
         }
         if (totalCount == 0) return new ArrayList<>();
         List<ChartData> result = new ArrayList<>();
-        for (String bucket : bucketOrder) {
-            long[] v = buckets.get(bucket);
-            if (v[0] > 0) {
-                BigDecimal pct = new BigDecimal(v[0] * 100).divide(new BigDecimal(totalCount), 1, RoundingMode.HALF_UP);
-                result.add(ChartData.builder().label(bucket).value(new BigDecimal(v[0])).value2(pct).value3(new BigDecimal(v[1])).build());
+        for (String bucket : orderBucketLabels(counts.keySet())) {
+            long n = counts.get(bucket)[0];
+            if (n > 0) {
+                BigDecimal pct = new BigDecimal(n * 100).divide(new BigDecimal(totalCount), 1, RoundingMode.HALF_UP);
+                result.add(ChartData.builder().label(bucket).value(new BigDecimal(n)).value2(pct)
+                        .value3(volumes.getOrDefault(bucket, BigDecimal.ZERO)).build());
             }
         }
         return result;
+    }
+
+    /** Ticket-size band labels sorted by lower bound, open-ended ("500+") after a closed band with the same start. */
+    static List<String> orderBucketLabels(java.util.Collection<String> labels) {
+        List<String> sorted = new ArrayList<>(labels);
+        sorted.sort(java.util.Comparator.comparingDouble(MerchantInsightService::bucketLowerBound)
+                .thenComparingInt((String l) -> l.endsWith("+") ? 1 : 0)
+                .thenComparing(java.util.Comparator.naturalOrder()));
+        return sorted;
+    }
+
+    /**
+     * Lower bound of a ticket-size band label, for ordering: "< 5" → 0,
+     * "5-10" → 5, "1K-5K" → 1000, "2.5K-5K" → 2500, "500+" → 500,
+     * "50K+" → 50000. Unparseable labels sort last.
+     */
+    static double bucketLowerBound(String label) {
+        if (label == null) return Double.MAX_VALUE;
+        String l = label.trim().toUpperCase().replace(",", "");
+        if (l.startsWith("<")) return 0;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^([0-9]+(?:\\.[0-9]+)?)\\s*([KM])?").matcher(l);
+        if (!m.find()) return Double.MAX_VALUE;
+        double v = Double.parseDouble(m.group(1));
+        if ("K".equals(m.group(2))) v *= 1_000;
+        else if ("M".equals(m.group(2))) v *= 1_000_000;
+        return v;
     }
 
     private List<ChartData> aggregateAttributes(List<com.acquira.common.model.SumDailyMerchantAttribute> attrs, String type) {
@@ -1108,6 +1164,8 @@ public class MerchantInsightService {
                 case "VISA": case "VISA_D": case "VISA_C": case "VISA_P": display = "Visa"; break;
                 case "AMEX": case "AMERICAN EXPRESS": case "AMERICANEXPRESS": display = "American Express"; break;
                 case "AANI": display = "Aani"; break;
+                // Jaywan: UAE domestic scheme, co-badged with Mastercard (V2026_10_26_01).
+                case "JAYWAN": case "JYWN": display = "Jaywan"; break;
                 // FIX BUG: UnionPay appears in multiple forms across feeds.
                 // 'UnionPay International' is the raw CardScheme string from the feed.
                 // 'UPI' is the card_type fallback written by the batch SQL when CardScheme
@@ -1185,7 +1243,7 @@ public class MerchantInsightService {
     private CustomerDemographics buildDemographics(List<com.acquira.common.model.SumDailyMerchantAttribute> attrs,
             List<com.acquira.common.model.SumDailyMerchantAttribute> prevAttrs,
             List<java.util.Map<String, Object>> monthlyTrends,
-            String tenantCurrencyCode) {
+            String tenantCurrencyCode, int ccyDecimals) {
         CustomerDemographics demo = new CustomerDemographics();
 
         demo.setCardSchemeValueSplit(normalizeSchemeNames(aggregateAttributeMap(attrs, "CARD_SCHEME", true)));
@@ -1266,15 +1324,18 @@ public class MerchantInsightService {
                 .collect(Collectors.toList());
         demo.setTopCountries(topCountries.isEmpty() ? null : topCountries);
 
+        // FIX (BH 2026-09 Insight PDF): averages were rounded to whole currency
+        // units (scale 0) and then printed with the tenant's minor-unit decimals,
+        // so BHD 178.390 showed as "178.000". Round to the currency's decimals.
         List<ChartData> avgTicket = new ArrayList<>();
         if (creditCount.compareTo(BigDecimal.ZERO) > 0)
-            avgTicket.add(ChartData.builder().label("Credit").value(creditVol.divide(creditCount, 0, RoundingMode.HALF_UP))
+            avgTicket.add(ChartData.builder().label("Credit").value(creditVol.divide(creditCount, ccyDecimals, RoundingMode.HALF_UP))
                     .value2(creditVol).value3(creditCount).build());
         if (debitCount.compareTo(BigDecimal.ZERO) > 0)
-            avgTicket.add(ChartData.builder().label("Debit").value(debitVol.divide(debitCount, 0, RoundingMode.HALF_UP))
+            avgTicket.add(ChartData.builder().label("Debit").value(debitVol.divide(debitCount, ccyDecimals, RoundingMode.HALF_UP))
                     .value2(debitVol).value3(debitCount).build());
         if (prepaidCount.compareTo(BigDecimal.ZERO) > 0)
-            avgTicket.add(ChartData.builder().label("Prepaid").value(prepaidVol.divide(prepaidCount, 0, RoundingMode.HALF_UP))
+            avgTicket.add(ChartData.builder().label("Prepaid").value(prepaidVol.divide(prepaidCount, ccyDecimals, RoundingMode.HALF_UP))
                     .value2(prepaidVol).value3(prepaidCount).build());
         demo.setAvgTicketByCardType(avgTicket);
 
@@ -1331,7 +1392,7 @@ public class MerchantInsightService {
         demo.setMonthlySalesGrowth(mSalesGrowth);
         demo.setMonthlyTxnGrowth(mTxnGrowth);
 
-        demo.setQuarterlyBreakdown(buildQuarterlyBreakdown(monthlyTrends));
+        demo.setQuarterlyBreakdown(buildQuarterlyBreakdown(monthlyTrends, ccyDecimals));
         demo.setBestMonth(findBestMonth(mSales));
         demo.setAvgMonthlyGrowthPct(calcAvgMonthlyGrowth(mSales));
         demo.setPeakSeason(findPeakSeason(mSales));
@@ -1341,10 +1402,13 @@ public class MerchantInsightService {
         return demo;
     }
 
-    private List<ChartData> buildQuarterlyBreakdown(List<java.util.Map<String, Object>> monthlyTrends) {
+    private List<ChartData> buildQuarterlyBreakdown(List<java.util.Map<String, Object>> monthlyTrends, int ccyDecimals) {
         // Use CALENDAR QUARTERS: Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec
-        // If a quarter is incomplete (e.g. only 2 of 3 months have data), still show it
-        // with a "*" suffix to indicate partial data.
+        // If a quarter is incomplete (e.g. only 2 of 3 months have data), still show it.
+        // ChartData fields: value = sales, value2 = txns, value3 = avg ticket,
+        // value4 = number of months with data (templates flag < 3 as PARTIAL and
+        // suppress quarter-over-quarter growth against an incomplete base — a
+        // one-month "Q3 2025" vs a full Q4 2025 printed as "+221.5%").
         Map<String, BigDecimal> qSales = new LinkedHashMap<>();
         Map<String, Long> qTxns = new LinkedHashMap<>();
         Map<String, Integer> qMonthCount = new LinkedHashMap<>(); // track how many months contributed
@@ -1377,10 +1441,11 @@ public class MerchantInsightService {
         for (String q : sortedKeys) {
             BigDecimal s = qSales.get(q);
             long t = qTxns.get(q);
-            BigDecimal atv = t > 0 ? s.divide(new BigDecimal(t), 0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            // Mark incomplete quarters (fewer than 3 months of data) with "*"
-            String label = qMonthCount.get(q) < 3 ? q + " *" : q;
-            result.add(ChartData.builder().label(label).value(s).value2(new BigDecimal(t)).value3(atv).build());
+            BigDecimal atv = t > 0 ? s.divide(new BigDecimal(t), ccyDecimals, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            // Incomplete quarters are flagged by the template from value4 (months
+            // of data); the old " *" label suffix duplicated that badge.
+            result.add(ChartData.builder().label(q).value(s).value2(new BigDecimal(t)).value3(atv)
+                    .value4(new BigDecimal(qMonthCount.get(q))).build());
         }
         return result;
     }
@@ -1697,8 +1762,9 @@ public class MerchantInsightService {
         // FIX NEW: tiered repeat segmentation — split the repeat cohort by visit depth
         //   occasional = exactly 2 visits, core = 3–5, loyal = 6+.
         //   Each expressed as a % of total unique cards so the three tiers plus the
-        //   single-visit share sum to 100%. Rounded to whole percent to match the
-        //   existing repeatCardPct/retentionRate display convention.
+        //   single-visit share sum to 100%. One decimal place: with whole percents
+        //   the 6+ tier (16 of 5,278 cards = 0.3%) rounded to 0 and vanished from
+        //   the page, and 8 + 2 + 91 made the segments add up to 101%.
         long tier2  = visitHistogram.getOrDefault(2L, 0L);
         long tier35 = sumWhere(visitHistogram, v -> v >= 3 && v <= 5);
         long tier6  = sumWhere(visitHistogram, v -> v >= 6);
@@ -1715,9 +1781,9 @@ public class MerchantInsightService {
             loyalty.setRepeatTier2Count(tier2);
             loyalty.setRepeatTier35Count(tier35);
             loyalty.setRepeatTier6Count(tier6);
-            loyalty.setRepeatTier2Pct(new BigDecimal(tier2 * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP));
-            loyalty.setRepeatTier35Pct(new BigDecimal(tier35 * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP));
-            loyalty.setRepeatTier6Pct(new BigDecimal(tier6 * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP));
+            loyalty.setRepeatTier2Pct(new BigDecimal(tier2 * 100.0 / totalCards).setScale(1, RoundingMode.HALF_UP));
+            loyalty.setRepeatTier35Pct(new BigDecimal(tier35 * 100.0 / totalCards).setScale(1, RoundingMode.HALF_UP));
+            loyalty.setRepeatTier6Pct(new BigDecimal(tier6 * 100.0 / totalCards).setScale(1, RoundingMode.HALF_UP));
         }
         return loyalty;
     }
@@ -1786,9 +1852,14 @@ public class MerchantInsightService {
     }
 
     private BigDecimal safeDivide(BigDecimal n, BigDecimal d) {
+        return safeDivide(n, d, 2);
+    }
+
+    /** Division at an explicit scale — money ratios must use the currency's decimals (BHD = 3). */
+    private BigDecimal safeDivide(BigDecimal n, BigDecimal d, int scale) {
         if (n == null) n = BigDecimal.ZERO;
         if (d == null || d.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
-        return n.divide(d, 2, RoundingMode.HALF_UP);
+        return n.divide(d, scale, RoundingMode.HALF_UP);
     }
 
     // ============================================================

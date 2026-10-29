@@ -103,6 +103,8 @@
                     <div style="font-size: 8px; color: #6B7280; margin-left: 4px;">WE</div>
                     <div style="font-size: 13px; font-weight: 900; color: #6D28D9;" th:text="${dto.overview.weekendRevenuePct != null ? dto.overview.weekendRevenuePct + '%' : '-'}">-</div>
                 </div>
+                <!-- Which days count as the weekend depends on the tenant's country (BH: Fri+Sat, AE: Sat+Sun). -->
+                <div style="font-size: 6.5px; color: #9CA3AF;">Weekend = <span th:text="${dto.overview.weekendLabel != null ? dto.overview.weekendLabel : 'Friday &amp; Saturday'}">Friday &amp; Saturday</span></div>
             </div>
             <div class="card" style="flex-direction: row; align-items: center; gap: 6px; padding: 8px 10px; border-top: 3px solid #D97706;">
                 <div>
@@ -133,6 +135,8 @@
                     <span th:if="${dto.overview.transactions.momGrowth < 0}">&#8226; Transactions down <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
                     <span th:if="${dto.overview.customers.momGrowth < 0}">&#8226; Unique customer count down <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
                     <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}">&#8226; ATV decreased <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
+                    <!-- Nothing declined: say so rather than leaving the box empty. -->
+                    <span th:unless="${dto.overview.sales.momGrowth < 0 or dto.overview.transactions.momGrowth < 0 or dto.overview.customers.momGrowth < 0 or dto.overview.avgTxnValue.momGrowth < 0}">&#8226; No headline metric declined versus the previous month<br/>&#8226; Sales, transactions, customers and ATV all held or grew</span>
                 </div>
             </div>
         </div>

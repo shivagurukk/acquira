@@ -11,9 +11,10 @@
 //   SAR 3.75  /USD  → 0.2666667      (pegged)
 //   QAR 3.64  /USD  → 0.2747253      (pegged)
 //
-// EGP FLOATS. Its entry is an indicative snapshot and goes stale — update it
-// (and FX_RATE_AS_OF) manually, or move it to a tenant setting if execs start
-// caring about precision. The UI labels converted figures as indicative.
+// FLOATING currencies (EGP) are deliberately NOT listed. They are converted
+// at the rate OF EACH BUSINESS DATE from the bank's own daily rate table
+// (GET /api/fx/series → utils/formatters.js setFxSeries / hooks/useFxSeries),
+// and a constant here would silently win over it.
 export const USD_PER_UNIT = {
     BHD: 2.6525199,   // 1 / 0.377   (pegged)
     AED: 0.2722941,   // 1 / 3.6725  (pegged)
@@ -21,9 +22,10 @@ export const USD_PER_UNIT = {
     SAR: 0.26667,
     QAR: 0.27473,
     KWD: 3.25733,   // managed basket, near-peg — indicative
-    EGP: 0.02070,   // FLOATING — indicative snapshot
+    // EGP intentionally absent — see above.
 };
 
-// Stamp shown next to converted figures / in CSV footers so nobody mistakes
-// an indicative conversion for a booked rate.
-export const FX_RATE_AS_OF = '2026-09-10';
+// Stamp shown next to PEGGED conversions / in CSV footers so nobody mistakes
+// an indicative conversion for a booked rate. Floating currencies carry the
+// actual rate dates from the series instead.
+export const FX_RATE_AS_OF = '2026-10-28';

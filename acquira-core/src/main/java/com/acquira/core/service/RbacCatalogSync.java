@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
+import com.acquira.common.security.PermissionEvaluator;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -55,10 +56,12 @@ public class RbacCatalogSync implements ApplicationRunner {
     private static final String CATALOG = "rbac/menu-catalog.json";
 
     private final JdbcTemplate jdbc;
+    private final PermissionEvaluator perm;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public RbacCatalogSync(JdbcTemplate jdbc) {
+    public RbacCatalogSync(JdbcTemplate jdbc, PermissionEvaluator perm) {
         this.jdbc = jdbc;
+        this.perm = perm;
     }
 
     @Override
@@ -95,6 +98,34 @@ public class RbacCatalogSync implements ApplicationRunner {
             // Never block startup on catalog reconciliation — a broken catalog
             // must not take the platform down, it must be loud in the log.
             log.error("[RbacSync] catalog sync failed: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Re-run the per-tenant steps outside startup. Without this, a tenant
+     * created through the admin UI had no {@code tenant_module},
+     * {@code tenant_group} or {@code tenant_group_perm} rows until the next
+     * restart, so every non-super-admin user of that tenant saw an empty
+     * sidebar and 403s (Egypt, 2026-10-27). The same gap hit a group whose
+     * menus were edited in Admin > RBAC: the write landed in the legacy
+     * {@code sys_group_menu} and nothing mirrored it until a restart.
+     *
+     * <p>Idempotent and additive, exactly like the startup pass. Bumps the
+     * RBAC cache stamp so live evaluators pick the new rows up at once.
+     *
+     * @param tenantId the tenant whose cache stamp to bump, or null for all
+     */
+    public void resyncTenants(Integer tenantId) {
+        if (!hasTable("sys_permission")) return;
+        try {
+            int modules = syncTenantModules();
+            int groups  = syncTenantGroups();
+            int mirror  = mirrorLegacyGrants();
+            perm.invalidate(tenantId);
+            log.info("[RbacSync] resync tenant={} | +{} tenant-modules +{} tenant-groups +{} mirrored grants",
+                     tenantId == null ? "all" : tenantId, modules, groups, mirror);
+        } catch (Exception e) {
+            log.error("[RbacSync] resync failed for tenant {}: {}", tenantId, e.getMessage(), e);
         }
     }
 

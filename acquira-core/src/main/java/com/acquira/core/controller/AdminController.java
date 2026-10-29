@@ -34,6 +34,59 @@ public class AdminController {
     private final com.acquira.core.service.RefreshTokenService refreshTokenService;
     private final com.acquira.core.service.TenantProvisioningService provisioningService;
     private final com.acquira.common.service.ReportCache reportCache;
+    private final com.acquira.common.service.CryptoService cryptoService;
+
+    /**
+     * Tenant settings that change WHO can sign in as WHOM. Pentest 2026-10-04 (C1):
+     * a bank admin could write sso_client_id / sso_client_secret / sso_tenant_id
+     * through PUT /settings, point the tenant's SSO at an IdP they control, and
+     * then log in as any platform user (SsoController matched on email alone).
+     * Identity-provider configuration is a platform decision — super admin only.
+     */
+    private static final String SSO_SETTING_PREFIX = "sso_";
+    /** Setting whose value is a credential: encrypted at rest, masked on read. */
+    private static final String SSO_CLIENT_SECRET_KEY = "sso_client_secret";
+    private static final String MASKED = "********";
+
+    /** 403 body if the caller may not write {@code key}; null when allowed. */
+    private ResponseEntity<?> guardSettingKey(String key) {
+        if (key != null && key.toLowerCase().startsWith(SSO_SETTING_PREFIX) && !isSuperAdmin()) {
+            return ResponseEntity.status(403).body(java.util.Map.of(
+                    "error", "SSO settings may only be changed by a super admin"));
+        }
+        return null;
+    }
+
+    /** Store credentials encrypted (CryptoService tolerates already-plain legacy rows on read). */
+    private String storedValue(String key, String value) {
+        if (value == null || value.isBlank()) return value;
+        if (SSO_CLIENT_SECRET_KEY.equalsIgnoreCase(key) && !cryptoService.isEncrypted(value)) {
+            return cryptoService.encrypt(value);
+        }
+        return value;
+    }
+
+    /**
+     * Never hand the secret back to the browser, not even to a super admin.
+     * Returns detached copies so the mask can never be flushed to the row.
+     */
+    private java.util.List<com.acquira.common.model.TenantSetting> masked(
+            java.util.List<com.acquira.common.model.TenantSetting> settings) {
+        java.util.List<com.acquira.common.model.TenantSetting> out = new java.util.ArrayList<>(settings.size());
+        for (var s : settings) {
+            var c = new com.acquira.common.model.TenantSetting();
+            c.setSettingId(s.getSettingId());
+            c.setTenant(s.getTenant());
+            c.setKey(s.getKey());
+            c.setType(s.getType());
+            boolean secret = SSO_CLIENT_SECRET_KEY.equalsIgnoreCase(s.getKey())
+                    && s.getValue() != null && !s.getValue().isBlank();
+            c.setValue(secret ? MASKED : s.getValue());
+            out.add(c);
+        }
+        return out;
+    }
+    private final com.acquira.core.service.RbacCatalogSync rbacSync;
 
     public AdminController(TenantRepository tenantRepository, UserRepository userRepository,
             UserTenantAccessRepository userTenantAccessRepository, RoleRepository roleRepository,
@@ -44,8 +97,12 @@ public class AdminController {
             com.acquira.core.service.PasswordService passwordService,
             com.acquira.core.service.RefreshTokenService refreshTokenService,
             com.acquira.core.service.TenantProvisioningService provisioningService,
-            com.acquira.common.service.ReportCache reportCache) {
+            com.acquira.common.service.ReportCache reportCache,
+            com.acquira.common.service.CryptoService cryptoService,
+            com.acquira.core.service.RbacCatalogSync rbacSync) {
+        this.cryptoService = cryptoService;
         this.tenantRepository = tenantRepository;
+        this.rbacSync = rbacSync;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
         this.roleRepository = roleRepository;
@@ -85,6 +142,9 @@ public class AdminController {
             org.slf4j.LoggerFactory.getLogger(AdminController.class)
                     .error("Tenant provisioning failed for tenant {}: {}", saved.getTenantId(), e.getMessage());
         }
+        // Per-tenant RBAC rows were only seeded at startup — seed them now so the
+        // new tenant has a sidebar without a restart. Never throws.
+        rbacSync.resyncTenants(saved.getTenantId() == null ? null : saved.getTenantId().intValue());
         return ResponseEntity.ok(saved);
     }
 
@@ -107,6 +167,18 @@ public class AdminController {
         // A create must never carry a client-supplied id: JPA would merge onto the
         // existing row, silently overwriting another account's credentials.
         user.setId(null);
+        // Server-managed fields (pentest 2026-10-04, M3) — mirrors UserController.createUser.
+        // A client-set ssoProvider would let a local account claim a federated
+        // identity (SSO matches on email, so a pre-created row would capture the
+        // real person's first SSO login); the approval/lockout fields are security state.
+        user.setSsoProvider(null);
+        user.setSsoId(null);
+        user.setApprovalStatus("APPROVED");
+        user.setActive(true);
+        user.setFailedLoginAttempts(0);
+        user.setLockedUntil(null);
+        user.setLastFailedLogin(null);
+        user.setCreatedAt(java.time.LocalDateTime.now());
 
         // Uniqueness — without these the unique index on username threw a
         // DataIntegrityViolationException that surfaced as an opaque 500.
@@ -191,7 +263,7 @@ public class AdminController {
     public ResponseEntity<?> getSettings(jakarta.servlet.http.HttpServletRequest request) {
         Long tenantId = extractTenantId(request);
         if (tenantId == null) return ResponseEntity.badRequest().body(java.util.Map.of("error", "No tenant context"));
-        return ResponseEntity.ok(tenantSettingRepository.findByTenant_TenantId(tenantId));
+        return ResponseEntity.ok(masked(tenantSettingRepository.findByTenant_TenantId(tenantId)));
     }
 
     @PutMapping("/settings")
@@ -203,24 +275,33 @@ public class AdminController {
         String key = payload.get("settingKey");
         String value = payload.get("settingValue");
         if (key == null) return ResponseEntity.badRequest().body(java.util.Map.of("error", "settingKey is required"));
+        ResponseEntity<?> denied = guardSettingKey(key);
+        if (denied != null) return denied;
+        // The masked placeholder round-tripping from the UI must not overwrite the real secret.
+        if (SSO_CLIENT_SECRET_KEY.equalsIgnoreCase(key) && MASKED.equals(value)) {
+            return ResponseEntity.ok(java.util.Map.of("message", "unchanged"));
+        }
 
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
         var existing = tenantSettingRepository.findByTenant_TenantIdAndKey(tenantId, key);
         com.acquira.common.model.TenantSetting setting;
         if (existing.isPresent()) {
             setting = existing.get();
-            setting.setValue(value);
+            setting.setValue(storedValue(key, value));
         } else {
             setting = new com.acquira.common.model.TenantSetting();
             setting.setTenant(tenant);
             setting.setKey(key);
-            setting.setValue(value);
+            setting.setValue(storedValue(key, value));
             setting.setType("STRING");
         }
         var saved = tenantSettingRepository.save(setting);
+        if (key.toLowerCase().startsWith(SSO_SETTING_PREFIX)) {
+            auditService.log("UPDATE_SSO_SETTING", "Changed " + key + " for tenant " + tenantId);
+        }
         // Settings such as netspread.fx_enabled and currency shape cached reports.
         reportCache.evict("tenant setting " + key, tenantId);
-        return ResponseEntity.ok(saved);
+        return ResponseEntity.ok(masked(java.util.List.of(saved)).get(0));
     }
 
     private boolean isSuperAdmin() {
@@ -276,18 +357,36 @@ public class AdminController {
     public ResponseEntity<java.util.List<com.acquira.common.model.TenantSetting>> getTenantSettings(
             @PathVariable Long tenantId) {
         if (!canAccessTenant(tenantId)) return ResponseEntity.status(403).build();
-        return ResponseEntity.ok(tenantSettingRepository.findByTenant_TenantId(tenantId));
+        return ResponseEntity.ok(masked(tenantSettingRepository.findByTenant_TenantId(tenantId)));
     }
 
     @PostMapping("/tenants/{tenantId}/settings")
-    public ResponseEntity<com.acquira.common.model.TenantSetting> saveTenantSetting(@PathVariable Long tenantId,
+    public ResponseEntity<?> saveTenantSetting(@PathVariable Long tenantId,
             @RequestBody com.acquira.common.model.TenantSetting setting) {
         if (!canAccessTenant(tenantId)) return ResponseEntity.status(403).build();
+        if (setting.getKey() == null || setting.getKey().isBlank()) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", "key is required"));
+        }
+        ResponseEntity<?> denied = guardSettingKey(setting.getKey());
+        if (denied != null) return denied;
+        if (SSO_CLIENT_SECRET_KEY.equalsIgnoreCase(setting.getKey()) && MASKED.equals(setting.getValue())) {
+            return ResponseEntity.ok(java.util.Map.of("message", "unchanged"));
+        }
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
-        setting.setTenant(tenant);
-        var saved = tenantSettingRepository.save(setting);
+        // Bind by (tenant, key), never by the client-supplied entity id: a foreign
+        // settingId in the body would re-parent another tenant's row onto this one.
+        var row = tenantSettingRepository.findByTenant_TenantIdAndKey(tenantId, setting.getKey())
+                .orElseGet(() -> {
+                    var s = new com.acquira.common.model.TenantSetting();
+                    s.setTenant(tenant);
+                    s.setKey(setting.getKey());
+                    return s;
+                });
+        row.setValue(storedValue(setting.getKey(), setting.getValue()));
+        row.setType(setting.getType() != null ? setting.getType() : (row.getType() != null ? row.getType() : "STRING"));
+        var saved = tenantSettingRepository.save(row);
         reportCache.evict("tenant setting", tenantId);
-        return ResponseEntity.ok(saved);
+        return ResponseEntity.ok(masked(java.util.List.of(saved)).get(0));
     }
 
     @GetMapping("/tenants/{tenantId}/dashboard-config")

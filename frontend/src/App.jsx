@@ -61,6 +61,8 @@ const ExecutiveDailyMerchant = lazy(() => import('./pages/executive/DailyMerchan
 const NetSpreadDashboard = lazy(() => import('./pages/executive/NetSpreadDashboard'));
 // Product Summary — per-tenant P&L by revenue product (POS/ECOM acquiring + DCC + rental + FX)
 const ProductSummary = lazy(() => import('./pages/executive/ProductSummary'));
+// Volume & Revenue Mix — Volume & Revenue re-cut by Destination / MCC / Scheme
+const VolumeRevenueMix = lazy(() => import('./pages/executive/VolumeRevenueMix'));
 const InterchangeOutgoing = lazy(() => import('./pages/interchange/Outgoing'));
 const InterchangeIncoming = lazy(() => import('./pages/interchange/Incoming'));
 const DimpDashboard = lazy(() => import('./pages/interchange/DimpDashboard'));
@@ -74,6 +76,8 @@ const SchemeBillingReference = lazy(() => import('./pages/ops/SchemeBillingRefer
 const DailyDigest = lazy(() => import('./pages/ops/DailyDigest'));
 const GroupReports = lazy(() => import('./pages/GroupReports'));
 const FinanceSummary = lazy(() => import('./pages/finance/FinanceSummary'));
+// Profitability Report — monthly MID P&L by destination / scheme / card interchange (finance column layout)
+const ProfitabilityReport = lazy(() => import('./pages/finance/ProfitabilityReport'));
 const MerchantInsightHub = lazy(() => import('./pages/reports/MerchantInsightHub'));
 const TransactionTrendsHub = lazy(() => import('./pages/reports/TransactionTrendsHub'));
 const BackupRestore = lazy(() => import('./pages/BackupRestore'));
@@ -130,6 +134,7 @@ function App() {
               <Route path="/executive/daily-merchant" element={<ExecutiveDailyMerchant />} />
               <Route path="/executive/net-spread" element={<NetSpreadDashboard />} />
               <Route path="/executive/product-summary" element={<ProductSummary />} />
+              <Route path="/executive/volume-revenue-mix" element={<VolumeRevenueMix />} />
 
               {/* Interchange — scheme clearing-file data integrity */}
               <Route path="/interchange/outgoing" element={<InterchangeOutgoing />} />
@@ -185,6 +190,7 @@ function App() {
               <Route path="/finance/dashboard" element={<FinanceDashboard />} />
               <Route path="/finance/summary" element={<FinanceSummary />} />
               <Route path="/finance/lists" element={<FinanceLists />} />
+              <Route path="/finance/profitability-report" element={<ProfitabilityReport />} />
 
               {/* Operations */}
               <Route path="/business/report-manager" element={

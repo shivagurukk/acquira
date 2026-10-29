@@ -99,34 +99,126 @@ let DISPLAY_MODE = 'LOCAL';     // 'LOCAL' | 'USD'
 export const setDisplayMode = (mode) => { DISPLAY_MODE = mode === 'USD' ? 'USD' : 'LOCAL'; };
 export const getDisplayMode = () => DISPLAY_MODE;
 
+// ── Dated FX series (floating currencies — EGP) ────────────────────────
+// A floating currency has no constant: GET /api/fx/series returns, for a
+// date range, the USD rate of EVERY day (the bank's MPS rate for that date,
+// or the previous available day's when that day has none) plus the tenant's
+// daily volume. hooks/useFxSeries pushes a page's range here; Layout.jsx
+// pushes a trailing-window DEFAULT so pages that have not asked for their own
+// range still convert at a recent, volume-weighted rate.
+//
+// With a series loaded, callers can convert at the rate of one date or of a
+// date range (volume-weighted over the days in it) — see fxRateForRange. With
+// no range, the series' overall effective rate applies.
+let FX_SERIES = null;          // active table: { base, days[], byDate, effective, latest, floating }
+let FX_SERIES_DEFAULT = null;  // Layout's trailing-window table
+
+const normalizeSeries = (t) => {
+    if (!t || !t.base || !Array.isArray(t.days)) return null;
+    const byDate = new Map();
+    t.days.forEach(d => { if (d && d.date) byDate.set(d.date, d); });
+    return { ...t, base: String(t.base).toUpperCase(), byDate };
+};
+/** A page's own range (from useFxSeries). */
+export const setFxSeries = (table) => { FX_SERIES = normalizeSeries(table) || FX_SERIES_DEFAULT; };
+/** Layout's default: becomes active unless a page already set a same-currency table. */
+export const setDefaultFxSeries = (table) => {
+    FX_SERIES_DEFAULT = normalizeSeries(table);
+    if (!FX_SERIES || !FX_SERIES_DEFAULT || FX_SERIES.base !== FX_SERIES_DEFAULT.base) FX_SERIES = FX_SERIES_DEFAULT;
+};
+export const restoreDefaultFxSeries = () => { FX_SERIES = FX_SERIES_DEFAULT; };
+export const getFxSeries = () => FX_SERIES;
+
+const toCode = (ccyOrSym) => ((ccyOrSym === DEFAULT_SYMBOL && DEFAULT_CCY)
+    ? DEFAULT_CCY : String(ccyOrSym).toUpperCase());
+
+/** Rate for one date ('YYYY-MM-DD') or a { from, to } range from a loaded
+ *  series: a range is volume-weighted over its days (simple average when the
+ *  tenant had no volume). null when the series has no day in the range. */
+const seriesRateForRange = (series, range) => {
+    if (!series || !range) return null;
+    if (typeof range === 'string') {
+        const d = series.byDate.get(range);
+        const r = d ? Number(d.usdPerUnit) : NaN;
+        return r > 0 ? r : null;
+    }
+    const from = range.from, to = range.to;
+    if (!from || !to) return null;
+    let wSum = 0, wRate = 0, n = 0, sRate = 0;
+    series.days.forEach(d => {
+        if (d.date < from || d.date > to) return;
+        const r = Number(d.usdPerUnit);
+        if (!(r > 0)) return;
+        const w = Number(d.volume) || 0;
+        if (w > 0) { wSum += w; wRate += w * r; }
+        sRate += r; n += 1;
+    });
+    if (n === 0) return null;
+    return wSum > 0 ? wRate / wSum : sRate / n;
+};
+
 /** USD-per-unit rate for a currency code (or the tenant's display symbol);
  *  null when the toggle is off, the currency is unknown/unrated, or it is
- *  already USD — i.e. null means "do not convert". */
-const usdRateFor = (ccyOrSym = DEFAULT_CCY) => {
+ *  already USD — i.e. null means "do not convert". Pegged currencies use the
+ *  constants; floating ones need a loaded series (optionally for a date/range). */
+const usdRateFor = (ccyOrSym = DEFAULT_CCY, range) => {
     if (DISPLAY_MODE !== 'USD' || !ccyOrSym) return null;
-    const code = (ccyOrSym === DEFAULT_SYMBOL && DEFAULT_CCY)
-        ? DEFAULT_CCY : String(ccyOrSym).toUpperCase();
+    const code = toCode(ccyOrSym);
     if (code === 'USD') return null;
-    const r = USD_PER_UNIT[code];
-    return typeof r === 'number' && r > 0 ? r : null;
+    const peg = USD_PER_UNIT[code];
+    if (typeof peg === 'number' && peg > 0) return peg;
+    if (FX_SERIES && FX_SERIES.base === code) {
+        const r = range ? seriesRateForRange(FX_SERIES, range) : null;
+        if (r) return r;
+        const eff = Number(FX_SERIES.effective?.usdPerUnit);
+        return eff > 0 ? eff : null;
+    }
+    return null;
 };
 
 /** True when the given (or tenant) currency will actually be converted. */
 export const isUsdDisplay = (ccy = DEFAULT_CCY) => usdRateFor(ccy) != null;
+/** USD-per-unit for a specific date or { from, to } range (volume-weighted);
+ *  the peg constant for pegged currencies; null when not converting. */
+export const fxRateForRange = (range, ccy = DEFAULT_CCY) => usdRateFor(ccy, range);
 /** Raw numeric conversion for call sites that format by hand (CSV builders,
- *  local tooltip helpers). Identity in LOCAL mode / for unrated currencies. */
-export const convertForDisplay = (val, ccy = DEFAULT_CCY) => {
-    const r = usdRateFor(ccy);
+ *  local tooltip helpers). Identity in LOCAL mode / for unrated currencies.
+ *  Pass a date or { from, to } to convert at that period's own rate. */
+export const convertForDisplay = (val, ccy = DEFAULT_CCY, range) => {
+    const r = usdRateFor(ccy, range);
     return r ? (Number(val) || 0) * r : (Number(val) || 0);
 };
 /** The code to LABEL money with: 'USD' when converting, else the input. */
 export const displayCurrencyCode = (ccy = DEFAULT_CCY) => (usdRateFor(ccy) ? 'USD' : ccy);
-/** Rate provenance for CSV footers: { base, rate, asOf } or null. */
-export const usdRateInfo = (ccy = DEFAULT_CCY) => {
-    const r = usdRateFor(ccy);
+/** Rate provenance for CSV footers / badges, or null when not converting.
+ *  Pegged: { base, rate, asOf, method: 'PEG', floating: false }.
+ *  Floating: { base, rate, unitsPerUsd, asOf (last rate date used), method,
+ *  from, to, daysExact, daysCarried, daysMissing, maxStaleDays, floating: true }. */
+export const usdRateInfo = (ccy = DEFAULT_CCY, range) => {
+    const r = usdRateFor(ccy, range);
     if (!r) return null;
-    const base = (ccy === DEFAULT_SYMBOL && DEFAULT_CCY) ? DEFAULT_CCY : String(ccy).toUpperCase();
-    return { base, rate: r, asOf: FX_RATE_AS_OF };
+    const base = toCode(ccy);
+    if (USD_PER_UNIT[base]) return { base, rate: r, asOf: FX_RATE_AS_OF, method: 'PEG', floating: false };
+    const e = FX_SERIES?.effective || {};
+    const inRange = (range && typeof range === 'object') ? range : { from: e.from, to: e.to };
+    let exact = 0, carried = 0, lastRateDate = null, maxStale = 0, n = 0;
+    (FX_SERIES?.days || []).forEach(d => {
+        if (inRange.from && d.date < inRange.from) return;
+        if (inRange.to && d.date > inRange.to) return;
+        n += 1;
+        if (Number(d.staleDays) > 0) carried += 1; else exact += 1;
+        maxStale = Math.max(maxStale, Number(d.staleDays) || 0);
+        if (!lastRateDate || d.rateDate > lastRateDate) lastRateDate = d.rateDate;
+    });
+    const daysInRange = (inRange.from && inRange.to)
+        ? Math.round((Date.parse(inRange.to) - Date.parse(inRange.from)) / 86400000) + 1 : n;
+    return {
+        base, rate: r, unitsPerUsd: 1 / r, asOf: lastRateDate || e.lastRateDate || null,
+        method: range ? 'VOLUME_WEIGHTED' : (e.method || 'VOLUME_WEIGHTED'),
+        from: inRange.from || null, to: inRange.to || null,
+        daysExact: exact, daysCarried: carried, daysMissing: Math.max(0, daysInRange - n), maxStaleDays: maxStale,
+        source: FX_SERIES?.latest?.source || 'MPS', floating: true,
+    };
 };
 
 // ── Per-tenant locale (date format + timezone) ─────────────────────────

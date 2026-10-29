@@ -6,9 +6,11 @@ import {
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
+import useFxSeries from '../../hooks/useFxSeries';
 import ChannelToggle from '../../components/ChannelToggle';
 import EmptyState from '../../components/EmptyState';
 import MidSidSummary from '../../components/MidSidSummary';
+import MerchantSuggest from '../../components/MerchantSuggest';
 import MarginGlossaryHint from '../../components/MarginGlossary';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
@@ -542,6 +544,20 @@ const NetSpreadDashboard = () => {
     const [month, setMonth] = useState('');
     const [monthDates, setMonthDates] = useState([]);
     const [selectedDates, setSelectedDates] = useState([]);
+    // Executive USD toggle: daily rates for the visible month (or the selected
+    // days), so every figure converts at the volume-weighted rate of exactly
+    // those dates — not at one rate for all time.
+    const fxRange = useMemo(() => {
+        if (selectedDates.length) {
+            const sorted = [...selectedDates].sort();
+            return { from: sorted[0], to: sorted[sorted.length - 1] };
+        }
+        if (!/^\d{4}-\d{2}$/.test(month || '')) return null;
+        const [y, m] = month.split('-').map(Number);
+        const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+    }, [month, selectedDates]);
+    useFxSeries(fxRange);
     const [search, setSearch] = useState('');
     const [searchDraft, setSearchDraft] = useState('');
     const [lossOnly, setLossOnly] = useState(false);
@@ -1422,7 +1438,9 @@ const NetSpreadDashboard = () => {
                             onKeyDown={e => { if (e.key === 'Enter') applySearch(); }}
                             onBlur={applySearch}
                             placeholder="Search name / MID / SID"
+                            list="nsd-merchant-suggest" autoComplete="off"
                             aria-label="Search merchant name, MID or SID" />
+                        <MerchantSuggest id="nsd-merchant-suggest" query={searchDraft} />
                         {search && (
                             <button onClick={() => { setSearchDraft(''); setSearch(''); setPage(0); }}
                                 aria-label="Clear search"

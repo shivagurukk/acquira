@@ -3,6 +3,7 @@ package com.acquira.batch.service;
 import com.acquira.common.model.*;
 import com.acquira.common.repository.*;
 import com.acquira.common.service.CryptoService;
+import com.acquira.common.service.CurrencyResolver;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -104,6 +105,13 @@ public class IntegrationPullService {
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.acquira.common.service.TenantStatusService tenantStatusService;
+
+    // FX_RATE pulls: tenant currency for rows without a currency column, and the
+    // in-process rate cache to drop after an apply.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CurrencyResolver currencyResolver;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.acquira.common.service.FxRateService fxRateService;
 
     /**
      * Failure-alert seam: publishes IntegrationRunFailedEvent on a FINAL failed
@@ -481,7 +489,8 @@ public class IntegrationPullService {
             if (normalizer == null
                     && report.getReportType() != IntegrationReport.ReportType.MERCHANT
                     && report.getReportType() != IntegrationReport.ReportType.DCC
-                    && report.getReportType() != IntegrationReport.ReportType.RENTAL) {
+                    && report.getReportType() != IntegrationReport.ReportType.RENTAL
+                    && report.getReportType() != IntegrationReport.ReportType.FX_RATE) {
                 // SQL fallback only when the in-process normaliser was unavailable.
                 // 5b. Normalize staged rows to match what the file-path ItemProcessor
                 //     produces: granular card_product_code preserved, card_type
@@ -508,7 +517,11 @@ public class IntegrationPullService {
             //    for it — the JobLauncher is async (returns in STARTING state).
             List<LocalDate> stagedDates = (report.getReportType() == IntegrationReport.ReportType.TRANSACTION)
                     ? stagedTransactionDates(tenantId) : List.of();
-            long jobMs = runBatchPipeline(report.getReportType(), tenantId, stagingStartedAtMs);
+            // FX_RATE has no Spring Batch job: the apply is one upsert from staging
+            // into the global fx_rate_daily table (see applyFxRates).
+            long jobMs = report.getReportType() == IntegrationReport.ReportType.FX_RATE
+                    ? applyFxRates(tenantId, report)
+                    : runBatchPipeline(report.getReportType(), tenantId, stagingStartedAtMs);
 
             // 7. Legacy per-merchant metrics (same as the file path does after its
             //    job) — date-scoped so a one-day pull doesn't re-aggregate the
@@ -837,6 +850,15 @@ public class IntegrationPullService {
                 stagingTable = "stg_dcc_revenue_raw";
                 insertSql = DCC_STAGING_INSERT;
                 mapper = row -> mapDccArgs(row, columnMap, tenantId, skips);
+            }
+            case FX_RATE -> {
+                // Daily FX rates from the bank's MPS (units of local currency per
+                // 1 USD, e.g. MPS_ADMN_RDEF_MAST.MAR_BUY_RATE) — applied by
+                // applyFxRates straight into fx_rate_daily, no batch job.
+                stagingTable = "stg_fx_rate_raw";
+                insertSql = FX_STAGING_INSERT;
+                final String tenantCcy = tenantCurrencyCode(tenantId);
+                mapper = row -> mapFxArgs(row, columnMap, tenantId, tenantCcy, skips);
             }
             case RENTAL -> {
                 // Dedicated rental feed — applied by dbPullRentalJob. No unit
@@ -1393,6 +1415,84 @@ public class IntegrationPullService {
         }
     }
 
+    private static final String FX_STAGING_INSERT = """
+            INSERT INTO stg_fx_rate_raw (
+                tenant_id, currency_code, rate_date, units_per_usd, load_time
+            ) VALUES (?,?,?,?,CURRENT_TIMESTAMP)
+        """;
+
+    /**
+     * Maps one source row to stg_fx_rate_raw insert args; null = skipped.
+     * Mapped staging fields: rate_date, units_per_usd (local units per 1 USD —
+     * the way MPS stores MAR_BUY_RATE), currency_code optional (defaults to the
+     * tenant's base currency, since a bank's MPS rate table is keyed by
+     * currency ids, not ISO codes). A rate that reads like USD-per-unit (< 1)
+     * is rejected rather than inverted on a guess.
+     */
+    private Object[] mapFxArgs(Map<String, Object> row, Map<String, String> columnMap,
+                               Long tenantId, String tenantCcy, SkipTracker skips) {
+        try {
+            BigDecimal rate = toBigDecimal(getMapped(row, columnMap, "units_per_usd"));
+            Timestamp rateDate = toTimestamp(getMapped(row, columnMap, "rate_date"));
+            if (rate == null || rateDate == null) {
+                skips.skip("units_per_usd or rate_date missing/unparseable");
+                return null;
+            }
+            if (rate.compareTo(BigDecimal.ONE) < 0) {
+                skips.skip("units_per_usd " + rate + " < 1 — expected local units per 1 USD, not USD per unit");
+                return null;
+            }
+            String ccy = str(getMapped(row, columnMap, "currency_code"));
+            if (ccy == null || ccy.isBlank()) ccy = tenantCcy;
+            if (ccy == null) {
+                skips.skip("currency_code missing and tenant base currency unresolved");
+                return null;
+            }
+            return new Object[]{ tenantId, ccy.trim().toUpperCase(), new java.sql.Date(rateDate.getTime()), rate };
+        } catch (Exception e) {
+            skips.skip(e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * FX_RATE apply: collapse staging to one row per (currency, date) — several
+     * MPS rows can share a date when the rate was re-entered during the day, the
+     * average is taken — and upsert into the GLOBAL fx_rate_daily. A MANUAL row
+     * (admin correction) is never overwritten; everything else is replaced, so
+     * re-pulling a day corrects it exactly like re-pulling a transaction day.
+     * Returns elapsed ms for the run-log timing line.
+     */
+    private long applyFxRates(Long tenantId, IntegrationReport report) {
+        long t0 = System.currentTimeMillis();
+        int n = jdbcTemplate.update("""
+                INSERT INTO fx_rate_daily (currency_code, rate_date, units_per_usd, source, source_ref, loaded_by)
+                SELECT currency_code, rate_date,
+                       ROUND(AVG(units_per_usd), 8), 'MPS_PULL', ?, 'integration'
+                FROM stg_fx_rate_raw
+                WHERE tenant_id = ?
+                GROUP BY currency_code, rate_date
+                ON CONFLICT (currency_code, rate_date) DO UPDATE
+                   SET units_per_usd = EXCLUDED.units_per_usd,
+                       source        = EXCLUDED.source,
+                       source_ref    = EXCLUDED.source_ref,
+                       loaded_by     = EXCLUDED.loaded_by,
+                       loaded_at     = CURRENT_TIMESTAMP
+                 WHERE fx_rate_daily.source <> 'MANUAL'
+                """,
+                "report#" + report.getId() + " " + report.getName(), tenantId);
+        jdbcTemplate.update("DELETE FROM stg_fx_rate_raw WHERE tenant_id = ?", tenantId);
+        if (fxRateService != null) fxRateService.invalidate();
+        log.info("[Integration] FX_RATE apply: {} rate day(s) upserted into fx_rate_daily for tenant {}", n, tenantId);
+        return System.currentTimeMillis() - t0;
+    }
+
+    /** Tenant base currency for FX rows that carry no currency column; null when unresolvable. */
+    private String tenantCurrencyCode(Long tenantId) {
+        if (currencyResolver == null) return null;
+        return currencyResolver.forTenantQuietly(tenantId).map(CurrencyResolver.CurrencyInfo::code).orElse(null);
+    }
+
     private static final String RENTAL_STAGING_INSERT = """
             INSERT INTO stg_rental_raw (
                 tenant_id, entity_name, mid, sid, tid, rental_amount, payment_date, load_time
@@ -1608,6 +1708,28 @@ public class IntegrationPullService {
 
         int divided = 0;
         if (minorUnits) {
+            // Tenant override of the divisor for its BASE currency (V2026_10_25_01):
+            // Egypt's feed carries EGP with 3 implied decimals (divide by 1000) while
+            // ref_country keeps EGP at 2 for display. NULL = no override. A failed
+            // lookup fails the pull, same reasoning as isCmmTenant().
+            String baseCcy; Integer divisorOverride;
+            try {
+                java.util.Map<String, Object> t = jdbcTemplate.queryForMap(
+                    "SELECT base_currency, cmm_minor_divisor FROM tenant WHERE tenant_id = ?", tenantId);
+                Object bc = t.get("base_currency");
+                baseCcy = bc != null && !bc.toString().isBlank() ? bc.toString().trim().toUpperCase() : null;
+                Object ov = t.get("cmm_minor_divisor");
+                divisorOverride = ov instanceof Number && ((Number) ov).intValue() > 0 ? ((Number) ov).intValue() : null;
+            } catch (Exception e) {
+                throw new IllegalStateException("Could not read tenant.cmm_minor_divisor for tenant " + tenantId
+                    + " (needed to decide minor-unit scaling): " + e.getMessage(), e);
+            }
+            if (baseCcy == null) divisorOverride = null;
+            if (divisorOverride != null) {
+                log.info("[Integration] Tenant {} CMM divisor override: {} amounts divided by {}", tenantId, baseCcy, divisorOverride);
+            }
+            final String ccyParam = baseCcy == null ? "" : baseCcy;
+
             // CURRENCY-AWARE SCALE (2026-08-10). The divisor was always resolved from
             // ref_country, but the ROUND() scale next to it was hardcoded to 2 — so a
             // BHD amount was divided by 1000 and then immediately rounded back to 2dp,
@@ -1616,19 +1738,23 @@ public class IntegrationPullService {
             divided += jdbcTemplate.update(
                 "UPDATE stg_trnx_raw s SET txn_currency_amount = ROUND(s.txn_currency_amount / d.div, " +
                 "  CAST(ROUND(LOG(10, d.div)) AS INT)) " +
-                "FROM LATERAL (SELECT COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
+                "FROM LATERAL (SELECT COALESCE(" +
+                "                CASE WHEN TRIM(s.txn_currency) = ? THEN ?::NUMERIC END, " +
+                "                (SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
                 "                THEN rc.decimal_notation_value ELSE 100 END) FROM ref_country rc " +
                 "                WHERE TRIM(rc.currency_code) = TRIM(s.txn_currency)), 100)::NUMERIC AS div) d " +
                 "WHERE s.tenant_id = ? AND s.txn_currency_amount IS NOT NULL",
-                tenantId);
+                ccyParam, divisorOverride, tenantId);
             divided += jdbcTemplate.update(
                 "UPDATE stg_trnx_raw s SET store_base_currency_amount = ROUND(s.store_base_currency_amount / d.div, " +
                 "  CAST(ROUND(LOG(10, d.div)) AS INT)) " +
-                "FROM LATERAL (SELECT COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
+                "FROM LATERAL (SELECT COALESCE(" +
+                "                CASE WHEN TRIM(s.store_base_currency) = ? THEN ?::NUMERIC END, " +
+                "                (SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
                 "                THEN rc.decimal_notation_value ELSE 100 END) FROM ref_country rc " +
                 "                WHERE TRIM(rc.currency_code) = TRIM(s.store_base_currency)), 100)::NUMERIC AS div) d " +
                 "WHERE s.tenant_id = ? AND s.store_base_currency_amount IS NOT NULL",
-                tenantId);
+                ccyParam, divisorOverride, tenantId);
             divided += jdbcTemplate.update(
                 "UPDATE stg_trnx_raw SET interchange_fee = ROUND(interchange_fee / 10000, 4) " +
                 "WHERE tenant_id = ? AND interchange_fee IS NOT NULL",

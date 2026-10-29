@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -32,6 +33,16 @@ public class EmailCampaignController {
     private final EmailCampaignLogRepository campaignLogRepo;
     private final CampaignExecutionService executionService;
     private final TemplateRendererService rendererService;
+    private final ReportEmailTemplateService reportEmailTemplateService;
+
+    /**
+     * createdBy is an audit field: it must name the authenticated admin, not
+     * whatever string the body carried (which let a caller attribute a campaign
+     * to a colleague). The body's "createdBy" is ignored on purpose.
+     */
+    private static String currentUsername() {
+        return SecurityContextHolder.getContext().getAuthentication().getName();
+    }
 
     // ═══════════════════════════════════════════════════════════
     //  TEMPLATES
@@ -56,7 +67,7 @@ public class EmailCampaignController {
         t.setBodyText((String) body.get("bodyText"));
         t.setIsActive(body.get("isActive") != null ? (Boolean) body.get("isActive") : true);
         t.setIsDefaultForType(body.get("isDefaultForType") != null ? (Boolean) body.get("isDefaultForType") : false);
-        t.setCreatedBy((String) body.get("createdBy"));
+        t.setCreatedBy(currentUsername());
         t.setCreatedAt(LocalDateTime.now());
         return ResponseEntity.ok(templateRepo.save(t));
     }
@@ -137,7 +148,8 @@ public class EmailCampaignController {
         return ResponseEntity.ok(Map.of(
             "hasBuiltIn", true,
             "subjectTemplate", ReportEmailTemplateService.builtInSubject(),
-            "bodyHtml", ReportEmailTemplateService.builtInBodyHtml(),
+            "bodyHtml", ReportEmailTemplateService.builtInBodyHtml(
+                reportEmailTemplateService.marketOf(TenantContext.getCurrentTenant())),
             "variables", ReportEmailTemplateService.REPORT_VARIABLES));
     }
 
@@ -166,7 +178,7 @@ public class EmailCampaignController {
         c.setScheduleCron((String) body.get("scheduleCron"));
         c.setScheduleTimezone((String) body.get("scheduleTimezone"));
         c.setStatus(EmailCampaign.Status.DRAFT);
-        c.setCreatedBy((String) body.get("createdBy"));
+        c.setCreatedBy(currentUsername());
         c.setCreatedAt(LocalDateTime.now());
 
         Long templateId = Long.valueOf(body.get("templateId").toString());

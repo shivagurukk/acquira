@@ -80,6 +80,8 @@ public class IntegrationReport {
     private LocalDateTime updatedAt;
 
     public enum ReportType {
-        MERCHANT, TRANSACTION, RENTAL, DCC
+        MERCHANT, TRANSACTION, RENTAL, DCC,
+        /** Daily FX rates (units of tenant currency per 1 USD) from the bank's MPS → fx_rate_daily. */
+        FX_RATE
     }
 }

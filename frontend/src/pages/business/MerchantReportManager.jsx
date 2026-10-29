@@ -136,6 +136,8 @@ const MerchantReportManager = () => {
     const [existingReportCount, setExistingReportCount] = useState(0);
     const [sendEmail, setSendEmail] = useState(false);
     const [sendS3, setSendS3] = useState(false);
+    // Only merchants with transactions in the statement month (skips empty statements).
+    const [activeOnly, setActiveOnly] = useState(true);
     const [generatedReports, setGeneratedReports] = useState([]);
     // Generation scope: ALL (whole tenant) | ONE (single MID) | FILE (CSV/TXT of MIDs)
     const [scope, setScope] = useState('ALL');
@@ -315,6 +317,7 @@ const MerchantReportManager = () => {
             const form = new FormData();
             form.append('sendEmail', String(sendEmail));
             form.append('sendS3', String(sendS3));
+            form.append('activeOnly', String(activeOnly));
             if (scope === 'ALL') {
                 form.append('scope', 'ALL');
             } else if (scope === 'ONE') {
@@ -347,6 +350,9 @@ const MerchantReportManager = () => {
             ];
             if (typeof result.matchedMidCount === 'number') {
                 startLogs.push(`🎯 Matched ${result.matchedMidCount}/${result.requestedMidCount} MID(s)`);
+            }
+            if (result.activeOnly) {
+                startLogs.push(`🧮 Active merchants only — ${result.skippedNoActivity || 0} with no transactions this month skipped`);
             }
             if (result.unmatchedMids?.length > 0) {
                 startLogs.push(`⚠️ Unmatched MIDs (skipped): ${result.unmatchedMids.join(', ')}`);
@@ -535,6 +541,31 @@ const MerchantReportManager = () => {
                                                         </Typography>
                                                         <Typography fontSize={11} color="text.secondary">
                                                             Archive PDFs to AWS bucket
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+
+                                                {/* Active-only toggle */}
+                                                <Box onClick={() => setActiveOnly(v => !v)} sx={{
+                                                    display: 'flex', alignItems: 'center', gap: 1.5,
+                                                    px: 2.5, py: 1.5, borderRadius: 3, cursor: 'pointer',
+                                                    border: `2px solid ${activeOnly ? '#16a34a' : '#e2e8f0'}`,
+                                                    background: activeOnly ? '#f0fdf4' : '#f8fafc',
+                                                    transition: 'all 0.2s', minWidth: 200, userSelect: 'none',
+                                                    '&:hover': { borderColor: '#16a34a', background: '#f0fdf4' },
+                                                }}>
+                                                    <Switch
+                                                        checked={activeOnly}
+                                                        onChange={(e) => { e.stopPropagation(); setActiveOnly(e.target.checked); }}
+                                                        size="small"
+                                                        sx={{ '& .MuiSwitch-thumb': { bgcolor: activeOnly ? '#16a34a' : undefined } }}
+                                                    />
+                                                    <Box textAlign="left">
+                                                        <Typography fontWeight="700" fontSize={13} color={activeOnly ? '#14532d' : 'text.secondary'}>
+                                                            Active merchants only
+                                                        </Typography>
+                                                        <Typography fontSize={11} color="text.secondary">
+                                                            Skip merchants with no transactions this month
                                                         </Typography>
                                                     </Box>
                                                 </Box>

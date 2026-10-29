@@ -314,9 +314,16 @@ public class BusinessAnalyticsController {
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     // Placeholder for filter options (dropdowns)
-    // Deliberately UNGATED: called by the shared Layout/filter components on
-    // every screen — gating it would break the whole app for non-admin users.
+    // Category gate (M4): the dropdown lists carry tenant merchant / MCC names.
+    // Every caller is a report page — <BusinessFilters> on the BUSINESS screens
+    // (plus Attrition / Top Performers, which V2026_08_17_01 moved to EXECUTIVE)
+    // and the two Daily Merchant dashboards — so any VIEW grant in either
+    // category passes. It is NOT used by the shared Layout (that is /data-bounds).
+    @PreAuthorize("@menuAccess.canAccessCategory('BUSINESS') or @menuAccess.canAccessCategory('EXECUTIVE')")
     @ReportResponse
     @GetMapping("/filter-options")
     public Map<String, List<String>> getFilterOptions() {
@@ -334,14 +341,38 @@ public class BusinessAnalyticsController {
     }
 
     /**
+     * Type-ahead for the executive search boxes: up to 10 merchant names that
+     * contain the typed text, names starting with it first. The report search
+     * itself (name / MID / SID) stays on the report endpoints.
+     */
+    @GetMapping("/merchant-suggest")
+    @PreAuthorize("@menuAccess.canAccess('/executive/daily-merchant') or @menuAccess.canAccess('/executive/net-spread')")
+    public List<String> suggestMerchants(@RequestParam(required = false) String q) {
+        Long tenantId = tenantService.getCurrentTenantId();
+        String term = q == null ? "" : q.trim();
+        if (tenantId == null || term.length() < 2) return List.of();
+        // LIKE metacharacters are escaped so "50%" is literal.
+        String esc = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return jdbcTemplate.queryForList(
+                "SELECT m.name FROM dim_merchant m "
+                        + "WHERE m.tenant_id = ? AND m.name ILIKE ? ESCAPE '\\' "
+                        + "GROUP BY m.name "
+                        + "ORDER BY (m.name ILIKE ? ESCAPE '\\') DESC, m.name LIMIT 10",
+                String.class, tenantId, "%" + esc + "%", esc + "%");
+    }
+
+    /**
      * Returns the date range that actually has data for the current tenant.
      * The frontend uses this to default to the LAST month with data instead of
      * the calendar's current month — which is otherwise empty in environments
      * where transaction data lags real time (e.g. data through April but it's
      * already May).
      */
-    // Deliberately UNGATED: called by the shared Layout/filter components on
-    // every screen — gating it would break the whole app for non-admin users.
+    // Deliberately UNGATED (re-checked for M4, 2026-10-04): the sidebar's
+    // <DataFreshness> in Layout.jsx calls this on EVERY screen, so there is no
+    // single screen grant to key on and a category gate would 403 for any
+    // OPERATIONS/ADMINISTRATION-only user. The payload is two dates
+    // (earliest/latest business_date) and no figures.
     @ReportResponse
     @GetMapping("/data-bounds")
     public Map<String, Object> getDataBounds() {

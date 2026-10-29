@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import api from '../api/axios';
+import useFxSeries from '../hooks/useFxSeries';
 import {
     RefreshCw, TrendingUp, TrendingDown, Receipt, Wallet,
     Percent, BarChart3, CalendarRange, ArrowDownRight, Layers, Globe,
@@ -19,7 +20,7 @@ import MarginGlossaryHint from '../components/MarginGlossary';
 import { useAuth } from '../contexts/AuthContext';
 import {
     createFmt, formatMsf, resolveDecimals,
-    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+    isUsdDisplay, usdRateInfo, fxRateForRange,
 } from '../utils/formatters';
 import {
     SERIES, GRID_PROPS, AXIS_PROPS, LEGEND_PROPS, ANIM, gradientId,
@@ -87,11 +88,12 @@ const deltaPct = (cur, prev) => {
    With a symbol it is MONEY and renders at the tenant's decimal precision
    (3dp for BHD, 2dp for AED/EGP) — it used to be pinned at 2dp, which hid a
    third of a Bahraini fils figure. Without a symbol it is a count. */
-const fullNum = (v, sym = '') => {
+const fullNum = (v, sym = '', dp) => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    // Executive display-currency toggle: convert + relabel when USD is active.
-    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
-    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
+    // Money on this page is already converted per bucket (see usdMode below),
+    // so this only labels and fixes the precision — no second conversion.
+    const d = Number.isInteger(dp) ? dp : resolveDecimals();
+    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -330,7 +332,7 @@ const BucketTooltip = ({ active, payload, label, fmt, fxEnabled = false }) => {
                 ['MSF', fmt.currency(d.msf)],
                 ['Interchange', fmt.currency(d.interchange)],
                 ['Scheme Fee', fmt.currency(d.schemeFee)],
-                ['PG Fee', fmt.currency(d.ecomFee)],
+                ['PG Cost', fmt.currency(d.ecomFee)],
                 ['Net Margin', fmt.currency(d.netRevenue)],
                 ['Net Margin %', `${num(d.marginPct).toFixed(2)}%`],
                 ['DCC (Acquirer)', fmt.currency(d.dccAcquirer)],
@@ -391,7 +393,6 @@ const MODES = [
 
 const Dashboard = () => {
     const { currencySymbol, currencyCode, currencyDecimals, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
 
     const [mode, setMode] = useState('MTD');
     // POS / ECOM / All channel scope (ChannelToggle; ChannelSql server-side).
@@ -431,8 +432,61 @@ const Dashboard = () => {
         : data?.ytd;
     // MTD buckets are weeks; both year modes are months.
     const buckets = mode === 'MTD' ? (data?.mtd?.weeks || []) : (period?.months || []);
-    const totals = period?.totals;
-    const prev = period?.prev;
+
+    /* ── Executive USD toggle, DATE-AWARE ──────────────────────────────
+       A floating currency (EGP) is never converted at one rate: each bucket
+       is converted at the volume-weighted rate of ITS OWN days (the bank's
+       daily MPS rate per business date, previous day's when a date has none),
+       totals/prev at their own date ranges, and only then summed/compared.
+       The formatters are given the daily series for the whole span this
+       page can show (two years back, for the Last-Year-vs-prior comparison);
+       pegged currencies resolve to their constant through the same calls. */
+    const eff = data?.effectiveDate || null;                 // 'YYYY-MM-DD'
+    const effYear = eff ? Number(eff.slice(0, 4)) : null;
+    const seriesRange = useMemo(() => (eff ? { from: `${effYear - 2}-01-01`, to: eff } : null), [eff, effYear]);
+    useFxSeries(seriesRange);
+    const usdMode = !!eff && isUsdDisplay(currencyCode);
+    // Date range of the selected period and of its comparison baseline.
+    const { periodRange, prevRange } = useMemo(() => {
+        if (!eff) return { periodRange: null, prevRange: null };
+        const d = new Date(eff + 'T00:00:00Z');
+        const iso = (x) => x.toISOString().slice(0, 10);
+        if (mode === 'MTD') {
+            const start = data?.mtd?.start || `${eff.slice(0, 7)}-01`;
+            const pm = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1));
+            const pmLen = new Date(Date.UTC(pm.getUTCFullYear(), pm.getUTCMonth() + 1, 0)).getUTCDate();
+            const pmEnd = new Date(Date.UTC(pm.getUTCFullYear(), pm.getUTCMonth(), Math.min(d.getUTCDate(), pmLen)));
+            return { periodRange: { from: start, to: eff }, prevRange: { from: iso(pm), to: iso(pmEnd) } };
+        }
+        if (mode === 'LAST_YEAR') {
+            const ly = effYear - 1;
+            return { periodRange: { from: `${ly}-01-01`, to: `${ly}-12-31` },
+                     prevRange: { from: `${ly - 1}-01-01`, to: `${ly - 1}-12-31` } };
+        }
+        const prevEnd = new Date(Date.UTC(d.getUTCFullYear() - 1, d.getUTCMonth(), d.getUTCDate()));
+        return { periodRange: { from: `${effYear}-01-01`, to: eff },
+                 prevRange: { from: `${effYear - 1}-01-01`, to: iso(prevEnd) } };
+    }, [eff, effYear, mode, data]);
+    // Convert one metric bucket at the rate of a date range; identity in LOCAL mode.
+    const MONEY_KEYS = ['volume', 'msf', 'interchange', 'schemeFee', 'ecomFee', 'netRevenue',
+        'dccAcquirer', 'rental', 'fx', 'netSpread', 'avgTicket'];
+    const convertBucket = useCallback((b, range) => {
+        if (!b || !usdMode) return b;
+        const rate = fxRateForRange(range, currencyCode);
+        if (!rate) return { ...b, fxUnitsPerUsd: null };
+        const out = { ...b, fxUnitsPerUsd: 1 / rate };
+        MONEY_KEYS.forEach(k => { if (b[k] != null) out[k] = num(b[k]) * rate; });
+        return out;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [usdMode, currencyCode]);
+    const totals = useMemo(() => convertBucket(period?.totals, periodRange), [convertBucket, period, periodRange]);
+    const prev = useMemo(() => convertBucket(period?.prev, prevRange), [convertBucket, period, prevRange]);
+    // Money label/precision: figures are pre-converted, so the formatters get
+    // 'USD' (which they never convert again) and 2dp in USD mode.
+    const moneyCcy = usdMode ? 'USD' : currencySymbol;
+    const moneyDp = usdMode ? 2 : resolveDecimals(currencyDecimals, currencyCode);
+    const fmt = useMemo(() => createFmt(moneyCcy, moneyDp), [moneyCcy, moneyDp]);
+    const fxInfo = usdMode ? usdRateInfo(currencyCode, periodRange) : null;
     const modeLabel = MODES.find(m => m.key === mode)?.label || mode;
     const compareLabel = mode === 'MTD'
         ? 'vs last month, same days elapsed'
@@ -440,7 +494,10 @@ const Dashboard = () => {
             ? 'vs the year before, full year'
             : 'vs last year, same period';
 
-    const chartData = useMemo(() => buckets.map(b => ({
+    const chartData = useMemo(() => buckets.map(raw => {
+      // Each week/month bucket carries its own from/to → its own rate.
+      const b = convertBucket(raw, raw.from && raw.to ? { from: raw.from, to: raw.to } : periodRange);
+      return {
         ...b,
         volume: num(b.volume),
         msf: num(b.msf),
@@ -460,7 +517,8 @@ const Dashboard = () => {
         avgTicket: num(b.avgTicket),
         marginPct: num(b.marginPct),
         txns: num(b.txns),
-    })), [buckets]);
+      };
+    }), [buckets, convertBucket, periodRange]);
 
     /* ── Apply client-side bucket-range filter ── */
     const lastIdx = chartData.length - 1;
@@ -553,7 +611,17 @@ const Dashboard = () => {
         txns: viewData.map(b => b.txns),
     }), [viewData]);
 
-    const runRate = data?.mtd?.runRate;
+    // Run-rate projections are MTD money → MTD rate.
+    const runRate = useMemo(() => {
+        const r = data?.mtd?.runRate;
+        if (!r || !usdMode) return r;
+        const rate = fxRateForRange(periodRange, currencyCode);
+        if (!rate) return r;
+        return { ...r,
+            projectedVolume: num(r.projectedVolume) * rate,
+            projectedNetRevenue: num(r.projectedNetRevenue) * rate,
+            projectedNetSpread: num(r.projectedNetSpread) * rate };
+    }, [data, usdMode, periodRange, currencyCode]);
 
     /* ── CSV export of the visible range (KPIs + bucket rows) ── */
     const exportCsv = useCallback(() => {
@@ -569,27 +637,36 @@ const Dashboard = () => {
         if (data?.effectiveDate) lines.push(['Through', data.effectiveDate].map(esc).join(','));
         if (channel !== 'ALL') lines.push(['Channel', channel].map(esc).join(','));
         if (isFiltered && viewData.length) lines.push(['Filter', `${viewData[0].label} to ${viewData[viewData.length - 1].label}`].map(esc).join(','));
-        lines.push(['Currency', displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'].map(esc).join(','));
-        // When the executive USD toggle is on, money cells below are converted
-        // and the file states the indicative rate used.
-        const fx = usdRateInfo(currencyCode);
-        if (fx) lines.push(['FX Rate', `1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`].map(esc).join(','));
+        lines.push(['Currency', usdMode ? 'USD' : (currencyCode || currencySymbol || 'UNKNOWN')].map(esc).join(','));
+        // When the executive USD toggle is on, money cells below are ALREADY
+        // converted — each bucket at the rate of its own dates — and the file
+        // states how. Pegged currencies: one constant.
+        if (fxInfo && !fxInfo.floating) {
+            lines.push(['FX Rate', `1 ${fxInfo.base} = ${fxInfo.rate} USD (pegged; as of ${fxInfo.asOf})`].map(esc).join(','));
+        } else if (fxInfo) {
+            lines.push(['FX Rate', `1 USD = ${fxInfo.unitsPerUsd.toFixed(4)} ${fxInfo.base} effective for ${fxInfo.from} to ${fxInfo.to} `
+                + `(bank daily rates, volume-weighted; each row below converted at its own period's rate — see Rate column; `
+                + `${fxInfo.daysExact} day(s) with a rate, ${fxInfo.daysCarried} carried from the previous day`
+                + `${fxInfo.daysMissing ? `, ${fxInfo.daysMissing} with none` : ''}; last rate date ${fxInfo.asOf})`].map(esc).join(','));
+        }
         lines.push('');
         // Money columns are written at the tenant's precision (3dp for BHD), not
         // a hardcoded 2dp; MSF keeps its reconciliation digits. Percentages below
         // are unaffected (ratios are currency-invariant).
-        const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
+        const dp = moneyDp;
         const msfDp = Math.max(4, dp);
-        const cv = (v) => convertForDisplay(num(v), currencyCode);
-        const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
+        const cv = (v) => num(v);
+        const rateCol = usdMode && fxInfo?.floating;
+        const heads = [mode === 'MTD' ? 'Week' : 'Month', ...(rateCol ? [`Rate (${fxInfo.base} per USD)`] : []), 'Transactions', 'Volume', 'Avg Ticket',
             'MSF', 'Interchange', 'Interchange % Vol', 'Scheme Fee', 'Scheme % Vol',
-            'PG Fee', 'Net Margin', 'Net Margin %', 'DCC (Acquirer)', 'Rental',
+            'PG Cost', 'Net Margin', 'Net Margin %', 'DCC (Acquirer)', 'Rental',
             ...(fxEnabled ? ['FX Income'] : []), 'Net Spread', 'Net Spread %'];
         lines.push(heads.map(esc).join(','));
         // Rate columns mirror the on-screen table; exported at 4dp because a
         // spreadsheet has no tooltip to fall back on.
         const rate = (fee, volume) => (num(volume) === 0 ? '' : (safeDiv(fee, volume) * 100).toFixed(4));
-        const row = (label, b) => [label, num(b.txns), cv(b.volume).toFixed(dp), cv(b.avgTicket).toFixed(dp),
+        const row = (label, b) => [label, ...(rateCol ? [b.fxUnitsPerUsd ? b.fxUnitsPerUsd.toFixed(4) : ''] : []),
+            num(b.txns), cv(b.volume).toFixed(dp), cv(b.avgTicket).toFixed(dp),
             cv(b.msf).toFixed(msfDp), cv(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
             cv(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
             cv(b.ecomFee).toFixed(dp),
@@ -614,7 +691,7 @@ const Dashboard = () => {
         a.download = `executive_summary_${mode.toLowerCase()}${channel !== 'ALL' ? `_${channel.toLowerCase()}` : ''}_${data?.effectiveDate || 'export'}.csv`;
         a.click();
         URL.revokeObjectURL(a.href);
-    }, [viewTotals, viewData, derived, mode, modeLabel, period, data, currencySymbol, currencyCode, currencyDecimals, isFiltered, channel, fxEnabled]);
+    }, [viewTotals, viewData, derived, mode, modeLabel, period, data, currencySymbol, currencyCode, currencyDecimals, isFiltered, channel, fxEnabled, usdMode, fxInfo, moneyDp]);
 
     // Skeleton only when there is nothing to show yet (first load / tenant
     // switch). A channel or refresh reload keeps the current figures on
@@ -637,7 +714,7 @@ const Dashboard = () => {
        on every cell — a 13-column table repeating "BHD" 7 times per row is
        noise. `ccy: true` renders the code next to the label; when the tenant
        currency is unknown the suffix is simply omitted (never invented). */
-    const headCcy = displayCurrencyCode(currencyCode || currencySymbol) || null;
+    const headCcy = usdMode ? 'USD' : (currencyCode || currencySymbol || null);
     const TABLE_HEADS = [
         { label: mode === 'MTD' ? 'Week' : 'Month' },
         { label: 'Transactions' },
@@ -645,7 +722,7 @@ const Dashboard = () => {
         { label: 'MSF', ccy: true },
         { label: 'Interchange', ccy: true },
         { label: 'Scheme Fee', ccy: true },
-        { label: 'PG Fee', ccy: true },
+        { label: 'PG Cost', ccy: true },
         { label: 'Net Margin', ccy: true },
         // Ancillary legs each get their own column (user, 2026-09-13) —
         // DCC / Rental / FX, with FX only when the tenant flag is on.
@@ -821,22 +898,15 @@ const Dashboard = () => {
                         gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
                         <HeroTile label="Volume" icon={BarChart3} accent="var(--chart-3)" sparkId="volume" index={0}
                             raw={num(vt.volume)} format={(v) => fmt.currency(v)}
-                            fullValue={fullNum(vt.volume, currencySymbol)}
+                            fullValue={fullNum(vt.volume, moneyCcy, moneyDp)}
                             deltaPct={dpg(vt.volume, prev?.volume)} compareLabel={compareLabel}
                             spark={sparks.volume}
                             sub={`${num(vt.txns).toLocaleString()} transactions`} />
                         <HeroTile label="Net Margin" icon={TrendingUp} accent="var(--chart-3)" sparkId="netrev" index={1}
                             raw={num(vt.netRevenue)} format={(v) => fmt.currency(v)}
-                            fullValue={fullNum(vt.netRevenue, currencySymbol)}
+                            fullValue={fullNum(vt.netRevenue, moneyCcy, moneyDp)}
                             deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
-                            spark={sparks.netRevenue}
-                            secondary={
-                                <span title={`Net Spread = net margin + DCC ${fmt.currency(num(vt.dccAcquirer))} + rental ${fmt.currency(num(vt.rental))}${fxEnabled ? ` + FX ${fmt.currency(num(vt.fx))}` : ''} · ${num(vt.spreadPct).toFixed(4)}% of volume`}>
-                                    <span style={{ color: SERIES.ancillary, fontWeight: 700 }}>Net Spread</span>{' '}
-                                    <b style={{ color: 'var(--text)' }}>{fmt.currency(num(vt.netSpread))}</b>
-                                    <span style={{ opacity: 0.8 }}> · {num(vt.spreadPct).toFixed(2)}%</span>
-                                </span>
-                            } />
+                            spark={sparks.netRevenue} />
                         <HeroTile label="Net Margin %" icon={Percent} accent="var(--chart-3)" sparkId="marginpct" index={2}
                             raw={num(vt.marginPct)} format={(v) => `${v.toFixed(2)}%`}
                             fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
@@ -874,7 +944,7 @@ const Dashboard = () => {
                                 hint="Blended take rate: MSF / volume" />
                             <RailMetric label="Interchange" icon={ArrowDownRight}
                                 value={fmt.currency(num(vt.interchange))}
-                                fullValue={fullNum(vt.interchange, currencySymbol)}
+                                fullValue={fullNum(vt.interchange, moneyCcy, moneyDp)}
                                 sub={`${derived.interchangeRate.toFixed(3)}%`}
                                 subTitle={`${derived.interchangeRate.toFixed(4)}% — interchange / volume`}
                                 deltaPct={dpg(vt.interchange, prev?.interchange)}
@@ -882,41 +952,41 @@ const Dashboard = () => {
                                 hint="Paid to issuers" />
                             <RailMetric label="Scheme Fee" icon={Layers}
                                 value={fmt.currency(num(vt.schemeFee))}
-                                fullValue={fullNum(vt.schemeFee, currencySymbol)}
+                                fullValue={fullNum(vt.schemeFee, moneyCcy, moneyDp)}
                                 sub={`${derived.schemeRate.toFixed(3)}%`}
                                 subTitle={`${derived.schemeRate.toFixed(4)}% — scheme fee / volume`}
                                 deltaPct={dpg(vt.schemeFee, prev?.schemeFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Paid to card schemes" />
-                            <RailMetric label="PG Fee" icon={Globe}
+                            <RailMetric label="PG Cost" icon={Globe}
                                 value={fmt.currency(num(vt.ecomFee))}
-                                fullValue={fullNum(vt.ecomFee, currencySymbol)}
+                                fullValue={fullNum(vt.ecomFee, moneyCcy, moneyDp)}
                                 deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
-                                hint="Payment gateway fees" />
+                                hint="Payment gateway cost" />
                             <RailMetric label="DCC (Acquirer)" icon={Globe}
                                 value={fmt.currency(num(vt.dccAcquirer))}
-                                fullValue={fullNum(vt.dccAcquirer, currencySymbol)}
+                                fullValue={fullNum(vt.dccAcquirer, moneyCcy, moneyDp)}
                                 deltaPct={dpg(vt.dccAcquirer, prev?.dccAcquirer)}
                                 compareLabel={compareLabel}
                                 hint="Acquirer share of DCC revenue (added to Net Spread)" />
                             <RailMetric label="Rental" icon={Layers}
                                 value={fmt.currency(num(vt.rental))}
-                                fullValue={fullNum(vt.rental, currencySymbol)}
+                                fullValue={fullNum(vt.rental, moneyCcy, moneyDp)}
                                 deltaPct={dpg(vt.rental, prev?.rental)}
                                 compareLabel={compareLabel}
                                 hint="POS / terminal rental income (added to Net Spread)" />
                             {fxEnabled && (
                                 <RailMetric label="FX Income" icon={Globe}
                                     value={fmt.currency(num(vt.fx))}
-                                    fullValue={fullNum(vt.fx, currencySymbol)}
+                                    fullValue={fullNum(vt.fx, moneyCcy, moneyDp)}
                                     deltaPct={dpg(vt.fx, prev?.fx)}
                                     compareLabel={compareLabel}
                                     hint="ECOM FX income (added to Net Spread)" />
                             )}
                             <RailMetric label="Net Spread" icon={Sigma}
                                 value={fmt.currency(num(vt.netSpread))}
-                                fullValue={fullNum(vt.netSpread, currencySymbol)}
+                                fullValue={fullNum(vt.netSpread, moneyCcy, moneyDp)}
                                 sub={`${num(vt.spreadPct).toFixed(3)}%`}
                                 subTitle={`${num(vt.spreadPct).toFixed(4)}% — net spread / volume`}
                                 deltaPct={dpg(vt.netSpread, prev?.netSpread)}
@@ -926,13 +996,13 @@ const Dashboard = () => {
                                     : 'Net margin + DCC (acquirer) + rental'} />
                             <RailMetric label="Total Charges" icon={Scale}
                                 value={fmt.currency(derived.fees)}
-                                fullValue={fullNum(derived.fees, currencySymbol)}
+                                fullValue={fullNum(derived.fees, moneyCcy, moneyDp)}
                                 sub={`${derived.feesRate.toFixed(3)}%`}
                                 subTitle={`${derived.feesRate.toFixed(4)}% — total fees / volume`}
                                 deltaPct={isFiltered ? null
                                     : (derived.prevFees ? deltaPct(derived.fees, derived.prevFees) : undefined)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
-                                hint="Interchange + scheme + PG fee" />
+                                hint="Interchange + scheme + PG cost" />
                         </div>
                     )}
 
@@ -1054,7 +1124,7 @@ const Dashboard = () => {
                                             <Cell key={i} fill={`url(#${gradientId('schemeFee')})`} />
                                         ))}
                                     </Bar>
-                                    <Bar dataKey="ecomFee" name="PG Fee" stackId="c"
+                                    <Bar dataKey="ecomFee" name="PG Cost" stackId="c"
                                         fill={C.ecomFee} maxBarSize={30}
                                         stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
                                         {viewData.map((b, i) => (
@@ -1128,40 +1198,40 @@ const Dashboard = () => {
                                                     )}
                                                 </td>
                                                 <td style={tdNum} title={fullNum(b.txns)}>{num(b.txns).toLocaleString()}</td>
-                                                <td style={tdNum} title={fullNum(b.volume, currencySymbol)}>{fmt.amount(b.volume)}</td>
+                                                <td style={tdNum} title={fullNum(b.volume, moneyCcy, moneyDp)}>{fmt.amount(b.volume)}</td>
                                                 <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.amount(b.msf)}</td>
-                                                <td style={tdNum} title={`${fullNum(b.interchange, currencySymbol)} · ${ratePctTitle(b.interchange, b.volume)}`}>
+                                                <td style={tdNum} title={`${fullNum(b.interchange, moneyCcy, moneyDp)} · ${ratePctTitle(b.interchange, b.volume)}`}>
                                                     {fmt.amount(b.interchange)}
                                                     <span style={rateInline}>({ratePct(b.interchange, b.volume)})</span>
                                                 </td>
-                                                <td style={tdNum} title={`${fullNum(b.schemeFee, currencySymbol)} · ${ratePctTitle(b.schemeFee, b.volume)}`}>
+                                                <td style={tdNum} title={`${fullNum(b.schemeFee, moneyCcy, moneyDp)} · ${ratePctTitle(b.schemeFee, b.volume)}`}>
                                                     {fmt.amount(b.schemeFee)}
                                                     <span style={rateInline}>({ratePct(b.schemeFee, b.volume)})</span>
                                                 </td>
-                                                <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.amount(b.ecomFee)}</td>
+                                                <td style={tdNum} title={fullNum(b.ecomFee, moneyCcy, moneyDp)}>{fmt.amount(b.ecomFee)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
                                                     color: b.netRevenue >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
-                                                    title={`${fullNum(b.netRevenue, currencySymbol)} · ${b.marginPct.toFixed(4)}% of volume`}>
+                                                    title={`${fullNum(b.netRevenue, moneyCcy, moneyDp)} · ${b.marginPct.toFixed(4)}% of volume`}>
                                                     {fmt.amount(b.netRevenue)}
                                                     <span style={rateInline}>({b.marginPct.toFixed(2)}%)</span>
                                                 </td>
                                                 <td style={{ ...tdNum, color: SERIES.ancillary }}
-                                                    title={`DCC (acquirer) ${fullNum(b.dccAcquirer, currencySymbol)}`}>
+                                                    title={`DCC (acquirer) ${fullNum(b.dccAcquirer, moneyCcy, moneyDp)}`}>
                                                     {fmt.amount(b.dccAcquirer)}
                                                 </td>
                                                 <td style={{ ...tdNum, color: SERIES.ancillary }}
-                                                    title={fullNum(b.rental, currencySymbol)}>
+                                                    title={fullNum(b.rental, moneyCcy, moneyDp)}>
                                                     {fmt.amount(b.rental)}
                                                 </td>
                                                 {fxEnabled && (
                                                     <td style={{ ...tdNum, color: SERIES.ancillary }}
-                                                        title={fullNum(b.fx, currencySymbol)}>
+                                                        title={fullNum(b.fx, moneyCcy, moneyDp)}>
                                                         {fmt.amount(b.fx)}
                                                     </td>
                                                 )}
                                                 <td style={{ ...tdNum, fontWeight: 700,
                                                     color: b.netSpread >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
-                                                    title={`${fullNum(b.netSpread, currencySymbol)} · ${b.spreadPct.toFixed(4)}% of volume`}>
+                                                    title={`${fullNum(b.netSpread, moneyCcy, moneyDp)} · ${b.spreadPct.toFixed(4)}% of volume`}>
                                                     {fmt.amount(b.netSpread)}
                                                     <span style={rateInline}>({b.spreadPct.toFixed(2)}%)</span>
                                                 </td>
@@ -1174,38 +1244,38 @@ const Dashboard = () => {
                                             {mode} Total{isFiltered ? ' (filtered)' : ''}
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.txns)}>{num(vt.txns).toLocaleString()}</td>
-                                        <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.amount(num(vt.volume))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.volume, moneyCcy, moneyDp)}>{fmt.amount(num(vt.volume))}</td>
                                         <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.amount(num(vt.msf))}</td>
-                                        <td style={tdTotal} title={`${fullNum(vt.interchange, currencySymbol)} · ${ratePctTitle(vt.interchange, vt.volume)}`}>
+                                        <td style={tdTotal} title={`${fullNum(vt.interchange, moneyCcy, moneyDp)} · ${ratePctTitle(vt.interchange, vt.volume)}`}>
                                             {fmt.amount(num(vt.interchange))}
                                             <span style={rateInline}>({ratePct(vt.interchange, vt.volume)})</span>
                                         </td>
-                                        <td style={tdTotal} title={`${fullNum(vt.schemeFee, currencySymbol)} · ${ratePctTitle(vt.schemeFee, vt.volume)}`}>
+                                        <td style={tdTotal} title={`${fullNum(vt.schemeFee, moneyCcy, moneyDp)} · ${ratePctTitle(vt.schemeFee, vt.volume)}`}>
                                             {fmt.amount(num(vt.schemeFee))}
                                             <span style={rateInline}>({ratePct(vt.schemeFee, vt.volume)})</span>
                                         </td>
-                                        <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.ecomFee, moneyCcy, moneyDp)}>{fmt.amount(num(vt.ecomFee))}</td>
                                         <td style={{ ...tdTotal, color: num(vt.netRevenue) >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
-                                            title={`${fullNum(vt.netRevenue, currencySymbol)} · ${num(vt.marginPct).toFixed(4)}% of volume`}>
+                                            title={`${fullNum(vt.netRevenue, moneyCcy, moneyDp)} · ${num(vt.marginPct).toFixed(4)}% of volume`}>
                                             {fmt.amount(num(vt.netRevenue))}
                                             <span style={rateInline}>({num(vt.marginPct).toFixed(2)}%)</span>
                                         </td>
                                         <td style={{ ...tdTotal, color: SERIES.ancillary }}
-                                            title={`DCC (acquirer) ${fullNum(vt.dccAcquirer, currencySymbol)}`}>
+                                            title={`DCC (acquirer) ${fullNum(vt.dccAcquirer, moneyCcy, moneyDp)}`}>
                                             {fmt.amount(num(vt.dccAcquirer))}
                                         </td>
                                         <td style={{ ...tdTotal, color: SERIES.ancillary }}
-                                            title={fullNum(vt.rental, currencySymbol)}>
+                                            title={fullNum(vt.rental, moneyCcy, moneyDp)}>
                                             {fmt.amount(num(vt.rental))}
                                         </td>
                                         {fxEnabled && (
                                             <td style={{ ...tdTotal, color: SERIES.ancillary }}
-                                                title={fullNum(vt.fx, currencySymbol)}>
+                                                title={fullNum(vt.fx, moneyCcy, moneyDp)}>
                                                 {fmt.amount(num(vt.fx))}
                                             </td>
                                         )}
                                         <td style={{ ...tdTotal, color: num(vt.netSpread) >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
-                                            title={fullNum(vt.netSpread, currencySymbol)}>
+                                            title={fullNum(vt.netSpread, moneyCcy, moneyDp)}>
                                             {fmt.amount(num(vt.netSpread))}
                                             <span style={rateInline}>({num(vt.spreadPct).toFixed(2)}%)</span>
                                         </td>

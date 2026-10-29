@@ -44,13 +44,16 @@ public class MonthlyMetricsRebuilder {
     private final SumDailyMerchantRepository dailyMerchantRepo;
     private final SumMonthlyMerchantMetricsRepository monthlyMetricsRepo;
     private final MerchantMetricCalculator merchantMetricCalculator;
+    private final com.acquira.common.repository.MerchantRepository merchantRepository;
 
     public MonthlyMetricsRebuilder(SumDailyMerchantRepository dailyMerchantRepo,
                                    SumMonthlyMerchantMetricsRepository monthlyMetricsRepo,
-                                   MerchantMetricCalculator merchantMetricCalculator) {
+                                   MerchantMetricCalculator merchantMetricCalculator,
+                                   com.acquira.common.repository.MerchantRepository merchantRepository) {
         this.dailyMerchantRepo = dailyMerchantRepo;
         this.monthlyMetricsRepo = monthlyMetricsRepo;
         this.merchantMetricCalculator = merchantMetricCalculator;
+        this.merchantRepository = merchantRepository;
     }
 
     /**
@@ -80,6 +83,24 @@ public class MonthlyMetricsRebuilder {
 
         Map<Long, List<SumDailyMerchant>> grouped = dailyRecs.stream()
                 .collect(Collectors.groupingBy(SumDailyMerchant::getMerchantId));
+
+        // sum_monthly_merchant_metrics has an FK to dim_merchant, sum_daily_merchant
+        // does not. A merchant row that was deleted while its daily summaries stayed
+        // behind (tenant 1, 2026-10-08 cross-tenant cleanup) made saveAll fail on the
+        // first orphan and took the whole nightly transaction job down with it. Skip
+        // the orphans — they have no merchant to report on anyway — and log them.
+        java.util.Set<Long> live = new java.util.HashSet<>();
+        for (com.acquira.common.model.Merchant m : merchantRepository.findAllById(grouped.keySet())) {
+            live.add(m.getMerchantId());
+        }
+        int orphans = 0;
+        for (java.util.Iterator<Long> it = grouped.keySet().iterator(); it.hasNext();) {
+            if (!live.contains(it.next())) { it.remove(); orphans++; }
+        }
+        if (orphans > 0) {
+            log.warn("monthly metrics {} tenant {}: skipped {} merchant_ids with daily summaries but no dim_merchant row",
+                    monthYear, tenantId, orphans);
+        }
 
         // Bulk-fetch the existing rows so the per-merchant loop below is pure
         // in-memory work. Preserving metricId/createdAt keeps this an UPDATE of

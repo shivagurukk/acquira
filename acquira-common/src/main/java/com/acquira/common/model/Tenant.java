@@ -48,6 +48,15 @@ public class Tenant {
     @Column(name = "input_format")
     private String inputFormat = "CMM";
 
+    // CMM-only override of the minor-unit divisor for amounts in baseCurrency
+    // (V2026_10_25_01). NULL = use ref_country.decimal_notation_value (legacy).
+    // 1000 = this tenant's feed carries its base currency with 3 implied
+    // decimals even though the currency itself displays with fewer (Egypt:
+    // milliemes in the feed, piastres on every report). Never affects display
+    // precision — that stays with CurrencyResolver.
+    @Column(name = "cmm_minor_divisor")
+    private Integer cmmMinorDivisor;
+
     // WHERE the card product/type for this tenant's transactions should come
     // from (V2026_08_08_06). CONFIG ONLY for now — no ingestion/fee logic
     // reads it yet; wiring is a later deliberate phase.
@@ -154,6 +163,14 @@ public class Tenant {
 
     public void setInputFormat(String inputFormat) {
         this.inputFormat = inputFormat;
+    }
+
+    public Integer getCmmMinorDivisor() {
+        return cmmMinorDivisor;
+    }
+
+    public void setCmmMinorDivisor(Integer cmmMinorDivisor) {
+        this.cmmMinorDivisor = cmmMinorDivisor;
     }
 
     public String getCardTypeSource() {

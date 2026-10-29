@@ -1,5 +1,6 @@
 package com.acquira.core.service;
 
+import com.acquira.common.service.FxRateService;
 import com.acquira.common.service.FxRates;
 import com.acquira.core.service.DigestContentService.DigestData;
 import com.acquira.core.service.DigestContentService.MerchantLine;
@@ -18,11 +19,23 @@ import java.util.Map;
  * Email clients strip <style> blocks and know nothing of the app's CSS
  * variables, so everything is inline styles on a fixed light palette. Every
  * money figure is shown in the tenant's home currency with an indicative USD
- * conversion beside it (FxRates — the server twin of the executive screens'
- * USD toggle), labelled with the rate stamp so nobody books the conversion.
+ * conversion beside it, labelled with its rate so nobody books the conversion:
+ * pegged currencies at the FxRates constants, floating ones (EGP) at the
+ * bank's daily rate FOR THE DIGEST'S BUSINESS DATE (FxRateService — previous
+ * available day's when that date has none), exactly as the executive screens'
+ * USD toggle does.
  */
 @Service
 public class DigestEmailService {
+
+    // Optional so the renderer stays constructible with no arguments (tests,
+    // preview). Absent → pegged constants only, floating currencies show no USD.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private FxRateService fxRateService;
+
+    public void setFxRateService(FxRateService fxRateService) {
+        this.fxRateService = fxRateService;
+    }
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", java.util.Locale.ENGLISH);
 
@@ -80,9 +93,8 @@ public class DigestEmailService {
         mix(h, d);
 
         h.append("<div style=\"color:").append(MUTED).append(";font-size:11px;padding:14px 4px 0;\">")
-         .append("USD figures are indicative, converted at the pegged/reference rates of ")
-         .append(FxRates.AS_OF).append(" — not booked rates. Generated automatically by Acquira once the "
-                 + "day's required feeds were loaded.")
+         .append(fxFooter(d))
+         .append(" Generated automatically by Acquira once the day's required feeds were loaded.")
          .append("</div></div></div>");
         return h.toString();
     }
@@ -182,7 +194,7 @@ public class DigestEmailService {
          .append("<div style=\"font-size:17px;font-weight:bold;margin-top:2px;\">")
          .append(isMoney ? money(v, d.currency, false) : count(v)).append("</div>");
         if (isMoney) {
-            String usd = usd(v, d.currency);
+            String usd = usd(v, d);
             if (usd != null) {
                 h.append("<div style=\"font-size:11px;color:").append(MUTED).append(";\">")
                  .append(usd).append("</div>");
@@ -229,7 +241,7 @@ public class DigestEmailService {
          .append("<div style=\"font-size:15px;font-weight:bold;margin-top:2px;\">")
          .append(isMoney ? money(v, d.currency, false) : count(v)).append("</div>");
         if (isMoney) {
-            String usd = usd(v, d.currency);
+            String usd = usd(v, d);
             if (usd != null) {
                 h.append("<div style=\"font-size:11px;color:").append(MUTED).append(";\">")
                  .append(usd).append("</div>");
@@ -359,7 +371,7 @@ public class DigestEmailService {
          .append(total ? "font-weight:bold;" : "")
          .append(v.signum() < 0 && !deduction ? "color:" + BAD + ";" : "").append("\">")
          .append(money(v, d.currency, true));
-        String usd = usd(v, d.currency);
+        String usd = usd(v, d);
         if (usd != null) {
             h.append(" <span style=\"color:").append(MUTED).append(";font-size:11px;\">")
              .append(usd).append("</span>");
@@ -406,7 +418,7 @@ public class DigestEmailService {
              .append(" <span style=\"color:").append(MUTED).append(";\">").append(esc(m.mid())).append("</span></td>")
              .append("<td align=\"right\" style=\"font-family:'Courier New',monospace;\">")
              .append(money(m.volume(), d.currency, false));
-            String usd = usd(m.volume(), d.currency);
+            String usd = usd(m.volume(), d);
             if (usd != null) {
                 h.append(" <span style=\"color:").append(MUTED).append(";font-size:11px;\">")
                  .append(usd).append("</span>");
@@ -496,9 +508,31 @@ public class DigestEmailService {
         return ccy + " " + f.format(v);
     }
 
-    /** "(≈ $1,234)" or null when no rate is known / already USD. */
-    private String usd(BigDecimal v, String ccy) {
-        BigDecimal u = FxRates.toUsd(v, ccy);
+    /** Footer sentence naming the rate basis of the USD annotations. */
+    private String fxFooter(DigestData d) {
+        if (d.currency != null && FxRates.usdPerUnit(d.currency) != null) {
+            return "USD figures are indicative, converted at the pegged rate as of " + FxRates.AS_OF + " — not booked rates.";
+        }
+        if (fxRateService != null && d.currency != null && d.businessDate != null) {
+            var r = fxRateService.rateOn(d.currency, d.businessDate).orElse(null);
+            if (r != null) {
+                String stale = r.carried()
+                        ? " (no rate on " + d.businessDate + "; " + r.rateDate() + "'s rate used)" : "";
+                return "USD figures are indicative, converted at the bank's rate for " + d.businessDate
+                        + ": 1 USD = " + r.unitsPerUsd().setScale(4, RoundingMode.HALF_UP).toPlainString()
+                        + " " + d.currency + stale + " — not booked rates.";
+            }
+        }
+        return "USD figures are omitted: no USD rate is available for " + d.currency + ".";
+    }
+
+    /** "(≈ $1,234)" or null when no rate is known / already USD. Floating
+     *  currencies use the rate of the digest's business date. */
+    private String usd(BigDecimal v, DigestData d) {
+        BigDecimal u = FxRates.toUsd(v, d.currency);
+        if (u == null && fxRateService != null && d.currency != null && d.businessDate != null) {
+            u = fxRateService.toUsd(v, d.currency, d.businessDate).orElse(null);
+        }
         if (u == null) return null;
         BigDecimal abs = u.abs();
         String s;

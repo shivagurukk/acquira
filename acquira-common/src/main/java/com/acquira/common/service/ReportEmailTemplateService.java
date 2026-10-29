@@ -1,7 +1,9 @@
 package com.acquira.common.service;
 
 import com.acquira.common.model.EmailTemplateConfig;
+import com.acquira.common.model.Tenant;
 import com.acquira.common.repository.EmailTemplateConfigRepository;
+import com.acquira.common.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,6 +47,47 @@ import java.util.regex.Pattern;
 public class ReportEmailTemplateService {
 
     private final EmailTemplateConfigRepository templateRepo;
+    private final TenantRepository tenantRepo;
+
+    /**
+     * Which built-in wording a tenant gets. Hardcoded for now (per product
+     * decision 2026-10-06): the Bahrain and UAE businesses have different
+     * merchant-support mailboxes and call centres, and the old single built-in
+     * sent the UAE contact details to Bahraini merchants.
+     */
+    public enum Market { BH, UAE }
+
+    // ── Per-market contact details (hardcoded) ──────────────────────────────
+    // Confirmed by the business on 2026-10-06. UAE values are the previous
+    // hardcoded ones, unchanged.
+    static final String BH_SUPPORT_EMAIL = "merchants.afs@afs.com.bh";
+    static final String BH_CALL_CENTER = "+973 17299444";
+    static final String UAE_SUPPORT_EMAIL = "uaemerchants@afs.com.bh";
+    static final String UAE_CALL_CENTER = "+971 4312 4848";
+
+    /**
+     * Resolve the market from the tenant row: home_country_code first, then
+     * base_currency as a fallback. Anything unrecognised (or no tenant at all)
+     * keeps the UAE wording, which is what every tenant received before.
+     */
+    public Market marketOf(Long tenantId) {
+        if (tenantId == null) return Market.UAE;
+        try {
+            return tenantRepo.findById(tenantId).map(ReportEmailTemplateService::marketOf).orElse(Market.UAE);
+        } catch (Exception e) {
+            log.warn("[report-email] tenant lookup failed for {} — defaulting to UAE wording: {}", tenantId, e.toString());
+            return Market.UAE;
+        }
+    }
+
+    public static Market marketOf(Tenant t) {
+        if (t == null) return Market.UAE;
+        String cc = t.getHomeCountryCode() == null ? "" : t.getHomeCountryCode().trim().toUpperCase();
+        if ("BH".equals(cc) || "BHR".equals(cc)) return Market.BH;
+        if ("AE".equals(cc) || "ARE".equals(cc) || "UAE".equals(cc)) return Market.UAE;
+        String ccy = t.getBaseCurrency() == null ? "" : t.getBaseCurrency().trim().toUpperCase();
+        return "BHD".equals(ccy) ? Market.BH : Market.UAE;
+    }
 
     private static final Pattern VAR_PATTERN = Pattern.compile("\\{\\{(\\w+)\\}\\}");
 
@@ -76,7 +119,7 @@ public class ReportEmailTemplateService {
      */
     public Rendered resolve(Long tenantId, Map<String, String> vars) {
         String subject = builtInSubject();
-        String body = builtInBodyHtml();
+        String body = builtInBodyHtml(marketOf(tenantId));
         boolean custom = false;
 
         if (tenantId != null) {
@@ -123,6 +166,14 @@ public class ReportEmailTemplateService {
      * Keep any edit within those constraints.
      */
     public static String builtInBodyHtml() {
+        return builtInBodyHtml(Market.UAE);
+    }
+
+    /** The built-in body with the given market's support mailbox and call centre. */
+    public static String builtInBodyHtml(Market market) {
+        boolean bh = market == Market.BH;
+        String supportEmail = bh ? BH_SUPPORT_EMAIL : UAE_SUPPORT_EMAIL;
+        String callCenter = bh ? BH_CALL_CENTER : UAE_CALL_CENTER;
         return ""
             + "<!DOCTYPE html>"
             + "<html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -182,8 +233,8 @@ public class ReportEmailTemplateService {
             +         "This is an automated message from AFS NEXUS, the merchant intelligence platform "
             +         "by Arab Financial Services.<br>"
             +         "If you prefer not to receive these monthly reports, simply email to "
-            +         "<a href=\"mailto:uaemerchants@afs.com.bh\" style=\"color:#6b7688;\">uaemerchants@afs.com.bh</a> "
-            +         "or contact our call center +971 4312 4848 and we will remove you from future mailings."
+            +         "<a href=\"mailto:" + supportEmail + "\" style=\"color:#6b7688;\">" + supportEmail + "</a> "
+            +         "or contact our call center " + callCenter + " and we will remove you from future mailings."
             +       "</div>"
             +     "</td></tr>"
 

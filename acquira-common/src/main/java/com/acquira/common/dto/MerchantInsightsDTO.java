@@ -126,6 +126,9 @@ public class MerchantInsightsDTO {
         private Kpi prevMaxDailySales;
         private BigDecimal weekdayRevenuePct;
         private BigDecimal weekendRevenuePct;
+        /** Which days "weekend" means for this tenant, e.g. "Friday & Saturday" (BH) or "Saturday & Sunday" (AE). */
+        private String weekendLabel;
+        private Integer weekendDayCount;
         private String peakDayName;
         private BigDecimal dailyAverage;
 
@@ -192,6 +195,10 @@ public class MerchantInsightsDTO {
         public void setWeekdayRevenuePct(BigDecimal v) { this.weekdayRevenuePct = v; }
         public BigDecimal getWeekendRevenuePct() { return weekendRevenuePct; }
         public void setWeekendRevenuePct(BigDecimal v) { this.weekendRevenuePct = v; }
+        public String getWeekendLabel() { return weekendLabel; }
+        public void setWeekendLabel(String v) { this.weekendLabel = v; }
+        public Integer getWeekendDayCount() { return weekendDayCount; }
+        public void setWeekendDayCount(Integer v) { this.weekendDayCount = v; }
         public String getPeakDayName() { return peakDayName; }
         public void setPeakDayName(String v) { this.peakDayName = v; }
         public BigDecimal getDailyAverage() { return dailyAverage; }
@@ -205,7 +212,8 @@ public class MerchantInsightsDTO {
             private List<ChartData> salesByDayOfWeek, transactionsByDayOfWeek, salesByWeekOfMonth, transactionsByWeekOfMonth;
             private Kpi prevSales, prevTransactions, prevCustomers, prevAvgTxnValue, prevMaxDailySales;
             private BigDecimal weekdayRevenuePct, weekendRevenuePct, dailyAverage;
-            private String peakDayName;
+            private String peakDayName, weekendLabel;
+            private Integer weekendDayCount;
             private Long refundVoidCount;
             private BigDecimal refundVoidVolume;
 
@@ -227,6 +235,8 @@ public class MerchantInsightsDTO {
             public BusinessOverviewBuilder prevMaxDailySales(Kpi v) { this.prevMaxDailySales = v; return this; }
             public BusinessOverviewBuilder weekdayRevenuePct(BigDecimal v) { this.weekdayRevenuePct = v; return this; }
             public BusinessOverviewBuilder weekendRevenuePct(BigDecimal v) { this.weekendRevenuePct = v; return this; }
+            public BusinessOverviewBuilder weekendLabel(String v) { this.weekendLabel = v; return this; }
+            public BusinessOverviewBuilder weekendDayCount(Integer v) { this.weekendDayCount = v; return this; }
             public BusinessOverviewBuilder peakDayName(String v) { this.peakDayName = v; return this; }
             public BusinessOverviewBuilder dailyAverage(BigDecimal v) { this.dailyAverage = v; return this; }
             public BusinessOverviewBuilder refundVoidCount(Long v) { this.refundVoidCount = v; return this; }
@@ -239,6 +249,7 @@ public class MerchantInsightsDTO {
                 o.prevSales = prevSales; o.prevTransactions = prevTransactions; o.prevCustomers = prevCustomers;
                 o.prevAvgTxnValue = prevAvgTxnValue; o.prevMaxDailySales = prevMaxDailySales;
                 o.weekdayRevenuePct = weekdayRevenuePct; o.weekendRevenuePct = weekendRevenuePct;
+                o.weekendLabel = weekendLabel; o.weekendDayCount = weekendDayCount;
                 o.peakDayName = peakDayName; o.dailyAverage = dailyAverage;
                 o.refundVoidCount = refundVoidCount; o.refundVoidVolume = refundVoidVolume;
                 return o;
@@ -877,11 +888,16 @@ public class MerchantInsightsDTO {
         private BigDecimal value;
         private BigDecimal value2;
         private BigDecimal value3;
+        private BigDecimal value4;
 
         public ChartData() {}
 
         public ChartData(String label, BigDecimal value, BigDecimal value2, BigDecimal value3) {
             this.label = label; this.value = value; this.value2 = value2; this.value3 = value3;
+        }
+
+        public ChartData(String label, BigDecimal value, BigDecimal value2, BigDecimal value3, BigDecimal value4) {
+            this(label, value, value2, value3); this.value4 = value4;
         }
 
         public String getLabel() { return label; }
@@ -892,17 +908,21 @@ public class MerchantInsightsDTO {
         public void setValue2(BigDecimal v) { this.value2 = v; }
         public BigDecimal getValue3() { return value3; }
         public void setValue3(BigDecimal v) { this.value3 = v; }
+        /** Optional 4th slot (e.g. months of data behind a quarterly row). Null unless set. */
+        public BigDecimal getValue4() { return value4; }
+        public void setValue4(BigDecimal v) { this.value4 = v; }
 
         public static ChartDataBuilder builder() { return new ChartDataBuilder(); }
 
         public static class ChartDataBuilder {
             private String label;
-            private BigDecimal value, value2, value3;
+            private BigDecimal value, value2, value3, value4;
             public ChartDataBuilder label(String v) { this.label = v; return this; }
             public ChartDataBuilder value(BigDecimal v) { this.value = v; return this; }
             public ChartDataBuilder value2(BigDecimal v) { this.value2 = v; return this; }
             public ChartDataBuilder value3(BigDecimal v) { this.value3 = v; return this; }
-            public ChartData build() { return new ChartData(label, value, value2, value3); }
+            public ChartDataBuilder value4(BigDecimal v) { this.value4 = v; return this; }
+            public ChartData build() { return new ChartData(label, value, value2, value3, value4); }
         }
     }
 

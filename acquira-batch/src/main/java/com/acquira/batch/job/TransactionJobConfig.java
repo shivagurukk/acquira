@@ -222,6 +222,7 @@ public class TransactionJobConfig {
         if (s.isEmpty()) return null;
         switch (s) {
             case "JCB":                       return "JCB";
+            case "JAYWAN":                    return "Jaywan";
             case "AMEX": case "AMERICAN EXPRESS": return "American Express";
             case "DINERS": case "DINERS CLUB":   return "Diners Club";
             case "DISCOVER":                  return "Discover";
@@ -1170,14 +1171,29 @@ public class TransactionJobConfig {
         // (their product codes are a different alphabet than the rate cards).
         // Destination/fee inputs are untouched by design.
         String binSource = "FILE"; String binHomeCountry = null;
+        // CMM divisor override for the tenant's base currency (V2026_10_25_01):
+        // Egypt's processor sends EGP with 3 implied decimals although EGP displays
+        // with 2, so the feed divisor can no longer be read off ref_country alone.
+        String tenantBaseCcy = null; Integer cmmDivisorOverride = null;
         try {
             java.util.Map<String, Object> trow = jdbcTemplate.queryForMap(
-                "SELECT card_type_source, home_country_code FROM tenant WHERE tenant_id = ?", tenantId);
+                "SELECT card_type_source, home_country_code, base_currency, cmm_minor_divisor FROM tenant WHERE tenant_id = ?", tenantId);
             binSource = String.valueOf(trow.getOrDefault("card_type_source", "FILE"));
             Object hc = trow.get("home_country_code");
             binHomeCountry = hc != null ? hc.toString().trim() : null;
+            Object bc = trow.get("base_currency");
+            tenantBaseCcy = bc != null && !bc.toString().isBlank() ? bc.toString().trim().toUpperCase() : null;
+            Object ov = trow.get("cmm_minor_divisor");
+            cmmDivisorOverride = ov instanceof Number ? ((Number) ov).intValue() : null;
         } catch (Exception e) {
             log.warn("Could not read tenant card_type_source ({}) - BIN typing disabled for this run", e.getMessage());
+        }
+        final String baseCcyForOverride = tenantBaseCcy;
+        final Integer baseCcyDivisorOverride = (!rawAmounts && cmmDivisorOverride != null && cmmDivisorOverride > 0
+                && tenantBaseCcy != null) ? cmmDivisorOverride : null;
+        if (baseCcyDivisorOverride != null) {
+            log.info("transactionTenantProcessor: CMM divisor override ACTIVE for tenant {} - {} amounts divided by {} (scale {}) instead of ref_country",
+                tenantId, baseCcyForOverride, baseCcyDivisorOverride, scaleFor(baseCcyDivisorOverride));
         }
         final boolean binTyping = "BIN".equalsIgnoreCase(binSource)
                 && binHomeCountry != null && !binHomeCountry.isBlank();
@@ -1284,6 +1300,11 @@ public class TransactionJobConfig {
                 int txnDecVal = resolveDecimal(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal, "Txn");
                 String txnCode = resolveCurrencyCode(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal);
                 if (txnCode != null) item.setTxnCurrency(txnCode);
+                // Tenant override applies to the base currency only; a foreign txn
+                // currency keeps its own ISO minor units.
+                if (baseCcyDivisorOverride != null && baseCcyForOverride.equals(txnCode)) {
+                    txnDecVal = baseCcyDivisorOverride;
+                }
                 if (!rawAmounts && item.getTxnCurrencyAmount() != null
                         && UNIT_MINOR.equals(unitModes.get("txn_currency_amount"))) {
                     // Scale now comes from the SAME currency fact as the divisor.
@@ -1295,6 +1316,9 @@ public class TransactionJobConfig {
             int stlDecVal = resolveDecimal(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal, "Store base");
             String stlCode = resolveCurrencyCode(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal);
             if (stlCode != null) item.setStoreBaseCurrency(stlCode);
+            if (baseCcyDivisorOverride != null && baseCcyForOverride.equals(stlCode)) {
+                stlDecVal = baseCcyDivisorOverride;
+            }
             final int stlScale = scaleFor(stlDecVal);
             if (!rawAmounts && item.getStoreBaseCurrencyAmount() != null
                     && UNIT_MINOR.equals(unitModes.get("store_base_currency_amount"))) {

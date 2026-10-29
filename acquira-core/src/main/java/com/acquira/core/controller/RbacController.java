@@ -18,10 +18,13 @@ public class RbacController {
 
     private final SysUserGroupRepository groupRepository;
     private final SysMenuRepository menuRepository;
+    private final com.acquira.core.service.RbacCatalogSync rbacSync;
 
-    public RbacController(SysUserGroupRepository groupRepository, SysMenuRepository menuRepository) {
+    public RbacController(SysUserGroupRepository groupRepository, SysMenuRepository menuRepository,
+            com.acquira.core.service.RbacCatalogSync rbacSync) {
         this.groupRepository = groupRepository;
         this.menuRepository = menuRepository;
+        this.rbacSync = rbacSync;
     }
 
     // --- Groups ---
@@ -55,7 +58,14 @@ public class RbacController {
             group.setMenus(new HashSet<>(menus));
         }
 
-        return ResponseEntity.ok(groupRepository.save(group));
+        SysUserGroup saved = groupRepository.saveAndFlush(group);
+        // The save above writes the legacy sys_group_menu. Authorisation reads
+        // tenant_group_perm, which was only mirrored at startup — so a group
+        // edited here changed nothing until a restart. Mirror now (additive;
+        // a removed menu is not revoked, per the catalog-sync rules) and bind
+        // a brand-new group to every tenant.
+        rbacSync.resyncTenants(null);
+        return ResponseEntity.ok(saved);
     }
 
     // --- Menus ---

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
+import useFxSeries from '../../hooks/useFxSeries';
 import { cachedGet } from '../../api/apiCache';
 import EmptyState from '../../components/EmptyState';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,6 +18,7 @@ import {
 import { weekRules } from '../../utils/weekRules';
 import ChannelToggle from '../../components/ChannelToggle';
 import MidSidSummary from '../../components/MidSidSummary';
+import MerchantSuggest from '../../components/MerchantSuggest';
 
 /* ════════════════════════════════════════════════════════════════════
    Executive Daily Merchant Dashboard — the acquiring day, read as a
@@ -851,6 +853,20 @@ const DailyMerchantDashboard = () => {
     const [month, setMonth] = useState('');
     const [monthDates, setMonthDates] = useState([]);
     const [selectedDates, setSelectedDates] = useState([]);
+    // Executive USD toggle: daily rates for the visible month (or the selected
+    // days), so every figure converts at the volume-weighted rate of exactly
+    // those dates — not at one rate for all time.
+    const fxRange = useMemo(() => {
+        if (selectedDates.length) {
+            const sorted = [...selectedDates].sort();
+            return { from: sorted[0], to: sorted[sorted.length - 1] };
+        }
+        if (!/^\d{4}-\d{2}$/.test(month || '')) return null;
+        const [y, m] = month.split('-').map(Number);
+        const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+    }, [month, selectedDates]);
+    useFxSeries(fxRange);
     const [filters, setFilters] = useState(EMPTY_FILTERS);
     /* Free-text search over SID / MID / merchant name (partial, server-side).
        searchDraft is the input; search commits 350ms after the last keystroke. */
@@ -1972,7 +1988,9 @@ const DailyMerchantDashboard = () => {
                                 onChange={e => setSearchDraft(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Escape') setSearchDraft(''); }}
                                 placeholder="SID / MID / name"
+                                list="edm-merchant-suggest" autoComplete="off"
                                 aria-label="Search by SID, MID or merchant name" />
+                            <MerchantSuggest id="edm-merchant-suggest" query={searchDraft} />
                             {searchDraft && (
                                 <button onClick={() => setSearchDraft('')} aria-label="Clear search"
                                     style={{ background: 'none', border: 0, cursor: 'pointer', display: 'flex', padding: 0 }}>

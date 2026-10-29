@@ -11,8 +11,11 @@ import java.util.Map;
  * (same contract as WorkingWeekResolver / weekRules.js).
  *
  * The Gulf currencies are hard-pegged to the dollar, so hardcoding is a
- * product decision, not laziness; EGP floats and its entry is an indicative
- * snapshot stamped with {@link #AS_OF}.
+ * product decision, not laziness. FLOATING currencies (EGP) are deliberately
+ * absent: they are converted at the rate of each business date by
+ * {@link FxRateService} (table fx_rate_daily, fed from the bank's MPS), and a
+ * constant here would silently win over it. {@link #AS_OF} now only stamps the
+ * pegged constants.
  */
 public final class FxRates {
 
@@ -20,7 +23,7 @@ public final class FxRates {
 
     /** Stamp shown next to converted figures so nobody mistakes an indicative
      *  conversion for a booked rate. */
-    public static final String AS_OF = "2026-09-10";
+    public static final String AS_OF = "2026-10-28";
 
     private static final Map<String, BigDecimal> USD_PER_UNIT = Map.of(
             "BHD", new BigDecimal("2.6525199"),   // 1 / 0.377   (pegged)
@@ -28,8 +31,8 @@ public final class FxRates {
             "OMR", new BigDecimal("2.60078"),
             "SAR", new BigDecimal("0.26667"),
             "QAR", new BigDecimal("0.27473"),
-            "KWD", new BigDecimal("3.25733"),   // managed basket, near-peg — indicative
-            "EGP", new BigDecimal("0.02070"));  // FLOATING — indicative snapshot
+            "KWD", new BigDecimal("3.25733"));  // managed basket, near-peg — indicative
+    // EGP intentionally NOT here — see class comment / FxRateService.
 
     /** USD-per-unit rate, or null when unknown / already USD ("do not convert"). */
     public static BigDecimal usdPerUnit(String currencyCode) {

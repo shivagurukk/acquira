@@ -31,7 +31,7 @@ public interface IntegrationRunLogRepository extends JpaRepository<IntegrationRu
      * schedule as live in the list.
      */
     @Query("SELECT COUNT(r) FROM IntegrationRunLog r WHERE r.tenantId = :tenantId "
-           + "AND r.status = com.acquira.common.model.IntegrationRunLog.Status.RUNNING "
+           + "AND r.status = 'RUNNING' "
            + "AND r.startTime >= :liveSince")
     long countLiveRuns(Long tenantId, LocalDateTime liveSince);
 

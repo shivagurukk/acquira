@@ -281,6 +281,26 @@ public class BackfillIngestionService {
             return;
         }
 
+        // Tenant override of the divisor for its BASE currency (V2026_10_25_01):
+        // Egypt's feed carries EGP with 3 implied decimals (divide by 1000) while
+        // ref_country keeps EGP at 2 for display. NULL = no override.
+        String baseCcy = null; Integer divisorOverride = null;
+        try {
+            java.util.Map<String, Object> t = jdbcTemplate.queryForMap(
+                "SELECT base_currency, cmm_minor_divisor FROM tenant WHERE tenant_id = ?", tenantId);
+            Object bc = t.get("base_currency");
+            baseCcy = bc != null && !bc.toString().isBlank() ? bc.toString().trim().toUpperCase() : null;
+            Object ov = t.get("cmm_minor_divisor");
+            divisorOverride = ov instanceof Number && ((Number) ov).intValue() > 0 ? ((Number) ov).intValue() : null;
+        } catch (Exception e) {
+            log.warn("[Backfill] Could not read tenant {} cmm_minor_divisor ({}) - using ref_country divisors",
+                    tenantId, e.getMessage());
+        }
+        if (baseCcy == null) divisorOverride = null;
+        if (divisorOverride != null) {
+            log.info("[Backfill] Tenant {} CMM divisor override: {} amounts divided by {}", tenantId, baseCcy, divisorOverride);
+        }
+
         // Scale from the divisor: LOG10(1000)=3 for BHD, LOG10(100)=2 for EGP/AED.
         String[][] cols = {
             { "txn_currency_amount", "txn_currency" },
@@ -292,10 +312,13 @@ public class BackfillIngestionService {
             divided += jdbcTemplate.update(
                 "UPDATE stg_trnx_raw s SET " + c[0] + " = ROUND(s." + c[0] + " / d.div, " +
                 "  CAST(ROUND(LOG(10, d.div)) AS INT)) " +
-                "FROM LATERAL (SELECT COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
+                "FROM LATERAL (SELECT COALESCE(" +
+                "                CASE WHEN TRIM(s." + c[1] + ") = ? THEN ?::NUMERIC END, " +
+                "                (SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
                 "                THEN rc.decimal_notation_value ELSE 100 END) FROM ref_country rc " +
                 "                WHERE TRIM(rc.currency_code) = TRIM(s." + c[1] + ")), 100)::NUMERIC AS div) d " +
-                "WHERE s.tenant_id = ? AND s." + c[0] + " IS NOT NULL", tenantId);
+                "WHERE s.tenant_id = ? AND s." + c[0] + " IS NOT NULL",
+                baseCcy == null ? "" : baseCcy, divisorOverride, tenantId);
         }
         divided += jdbcTemplate.update(
             "UPDATE stg_trnx_raw SET interchange_fee = ROUND(interchange_fee / 10000, 4) " +

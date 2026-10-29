@@ -240,7 +240,8 @@ public class PdfController {
             @RequestParam(required = false) Integer month,
             @RequestParam(defaultValue = "false") boolean sendEmail,
             @RequestParam(defaultValue = "false") boolean sendS3,
-            @RequestParam(required = false) List<Long> merchantIds) {
+            @RequestParam(required = false) List<Long> merchantIds,
+            @RequestParam(defaultValue = "false") boolean activeOnly) {
 
         if (!playwrightPdfService.isEngineReady()) {
             return ResponseEntity.ok(Map.of(
@@ -346,6 +347,29 @@ public class PdfController {
                 merchants = merchantRepository.findByTenantIdAndGenerateReportFlag(currentTenant, 1);
                 log.info("[BATCH] Full mode — running for {} merchants with generate_report_flag=1 (tenant={})",
                         merchants.size(), currentTenant);
+            }
+
+            // ACTIVE-ONLY: keep just the merchants that actually transacted in the
+            // target month. A merchant with no activity would otherwise get (and be
+            // emailed) a near-empty statement. Decided from sum_daily_merchant, the
+            // same source the PDF renders from, scoped to this tenant and month.
+            int skippedNoActivity = 0;
+            if (activeOnly && !merchants.isEmpty()) {
+                Set<Long> active = activeMerchantIdsForMonth(currentTenant, targetMonth);
+                int before = merchants.size();
+                merchants = merchants.stream()
+                        .filter(m -> active.contains(m.getMerchantId()))
+                        .collect(Collectors.toList());
+                skippedNoActivity = before - merchants.size();
+                log.info("[BATCH] Active-only — {} of {} merchants have transactions in {} ({} skipped)",
+                        merchants.size(), before, targetMonth, skippedNoActivity);
+                if (merchants.isEmpty()) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "status",  "NO_ACTIVE_MERCHANTS",
+                        "message", "None of the selected merchants have transactions in " + targetMonth
+                                 + ". Turn off 'Active merchants only' to generate for all of them.",
+                        "skippedNoActivity", skippedNoActivity));
+                }
             }
 
             List<long[]>   batchMerchantIds = new ArrayList<>(merchants.size());
@@ -566,6 +590,8 @@ public class PdfController {
             response.put("emailRecipients", merchantEmailMap.size());
             response.put("mode",            resolveMode(sendEmail, s3Requested, selective));
             response.put("selective",       selective);
+            response.put("activeOnly",      activeOnly);
+            response.put("skippedNoActivity", skippedNoActivity);
             if (selective) {
                 response.put("processedMerchantIds", midList);
                 response.put("missingMerchantIds",   missingIds);
@@ -578,6 +604,21 @@ public class PdfController {
             log.error("[BATCH] Unexpected error", e);
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    /**
+     * Merchant IDs that have at least one transaction in the given month for this
+     * tenant, read from sum_daily_merchant (the table the statement renders from).
+     */
+    private Set<Long> activeMerchantIdsForMonth(Long tenantId, YearMonth month) {
+        java.sql.Date from = java.sql.Date.valueOf(month.atDay(1));
+        java.sql.Date to   = java.sql.Date.valueOf(month.plusMonths(1).atDay(1));
+        List<Long> ids = jdbcTemplate.queryForList(
+            "SELECT DISTINCT merchant_id FROM sum_daily_merchant " +
+            "WHERE tenant_id = ? AND business_date >= ? AND business_date < ? " +
+            "  AND merchant_id IS NOT NULL AND COALESCE(total_txns, 0) > 0",
+            Long.class, tenantId, from, to);
+        return new HashSet<>(ids);
     }
 
     /**
@@ -748,7 +789,8 @@ public class PdfController {
             @RequestParam(required = false) String scope,
             @RequestParam(required = false) String mid,
             @RequestParam(required = false) List<String> mids,
-            @RequestParam(required = false) MultipartFile file) {
+            @RequestParam(required = false) MultipartFile file,
+            @RequestParam(defaultValue = "false") boolean activeOnly) {
 
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) {
@@ -764,7 +806,7 @@ public class PdfController {
 
         if (wantsAll) {
             // Delegate to the batch path; its ALL branch is tenant-scoped.
-            return generateAllReports(year, month, sendEmail, sendS3, null);
+            return generateAllReports(year, month, sendEmail, sendS3, null, activeOnly);
         }
 
         // Gather requested MID strings from single + list + file
@@ -825,7 +867,7 @@ public class PdfController {
         // resolution info. Flag-blocked merchants come back in flaggedOffMerchantIds;
         // map them back to MIDs so the UI can name them.
         ResponseEntity<Map<String, Object>> resp =
-                generateAllReports(year, month, sendEmail, sendS3, resolvedIds);
+                generateAllReports(year, month, sendEmail, sendS3, resolvedIds, activeOnly);
 
         Map<String, Object> body = (resp.getBody() != null)
                 ? new HashMap<>(resp.getBody()) : new HashMap<>();

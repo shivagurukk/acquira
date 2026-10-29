@@ -10,7 +10,8 @@ import NotificationBell from './NotificationBell';
 import ShortcutsPanel from './ShortcutsPanel';
 import DataFreshness from './DataFreshness';
 import DashboardBackdrop from './DashboardBackdrop';
-import { setDisplayMode } from '../utils/formatters';
+import { setDisplayMode, setDefaultFxSeries } from '../utils/formatters';
+import api from '../api/axios';
 import { USD_PER_UNIT, FX_RATE_AS_OF } from '../config/fxRates';
 import './sidebar.css';
 
@@ -25,9 +26,11 @@ const ENV_TAG = import.meta.env.VITE_ENV_LABEL || (import.meta.env.PROD ? 'PROD'
 // ── Executive display currency (local ↔ USD) ───────────────────────
 // The routes registered under sys_menu category 'EXECUTIVE'. On these pages
 // (and ONLY these — that is the product decision) the topbar shows a currency
-// dropdown; choosing USD converts every money figure client-side at the
-// hardcoded indicative rates in config/fxRates.js via the display layer in
-// utils/formatters.js. Everywhere else the mode is forced back to LOCAL.
+// dropdown; choosing USD converts every money figure client-side via the
+// display layer in utils/formatters.js: pegged Gulf currencies at the
+// constants in config/fxRates.js, floating ones (EGP) at the bank's DAILY
+// rate for each business date (GET /api/fx/series). Everywhere else the mode
+// is forced back to LOCAL.
 const CCY_TOGGLE_PATHS = new Set([
     '/dashboard',                       // Executive Dashboard
     '/business/ceo-volume-revenue',     // Volume & Revenue
@@ -39,6 +42,7 @@ const CCY_TOGGLE_PATHS = new Set([
     '/executive/daily-merchant',        // Daily Merchant Performance
     '/executive/net-spread',            // Net Spread Dashboard
     '/executive/product-summary',       // Product Summary
+    '/executive/volume-revenue-mix',    // Volume & Revenue Mix
 ]);
 const CCY_KEY = 'acquira_display_ccy';
 function loadUsdDisplay() {
@@ -117,10 +121,38 @@ const Layout = () => {
         try { localStorage.setItem(CCY_KEY, v ? 'USD' : 'LOCAL'); } catch { /* ignore */ }
     }, []);
     const ccyPage = CCY_TOGGLE_PATHS.has(location.pathname);
+    // Floating currency (no peg constant): ask the server whether daily rates
+    // exist, and keep a trailing-window series as the DEFAULT table so pages
+    // that have not loaded their own range still convert at a recent,
+    // volume-weighted rate. 204 = nothing loaded → no toggle.
+    const [fxDefault, setFxDefault] = useState(null);
+    const floatingCcy = !!currencyCode && currencyCode !== 'USD' && !USD_PER_UNIT[currencyCode];
+    useEffect(() => {
+        if (!floatingCcy) { setDefaultFxSeries(null); setFxDefault(null); return undefined; }
+        let cancelled = false;
+        const to = new Date();
+        const from = new Date(to.getTime() - 35 * 86400000);
+        const iso = (d) => d.toISOString().slice(0, 10);
+        api.get('/fx/series', { params: { from: iso(from), to: iso(to) } })
+            .then(res => {
+                if (cancelled) return;
+                const ok = res.status !== 204 && res.data && res.data.base;
+                setDefaultFxSeries(ok ? res.data : null);
+                setFxDefault(ok ? res.data : null);
+            })
+            .catch(() => { if (!cancelled) { setDefaultFxSeries(null); setFxDefault(null); } });
+        return () => { cancelled = true; };
+    }, [floatingCcy, currencyCode, tenantVersion]);
     // The toggle only exists when there is something to convert: a known
-    // tenant currency, with a hardcoded rate, that isn't already USD.
+    // tenant currency that isn't already USD, with either a peg constant or
+    // daily rates on the server.
     const canToggleCcy = ccyPage && !!currencyCode && currencyCode !== 'USD'
-        && !!USD_PER_UNIT[currencyCode];
+        && (!!USD_PER_UNIT[currencyCode] || !!fxDefault);
+    const fxLatest = fxDefault?.latest || null;
+    const ccyTitle = USD_PER_UNIT[currencyCode]
+        ? `Executive pages display currency. USD figures are converted at 1 ${currencyCode} = ${USD_PER_UNIT[currencyCode]} USD (pegged; as of ${FX_RATE_AS_OF}).`
+        : `Executive pages display currency. USD figures are converted day by day at the bank's USD/${currencyCode} rate for each business date (a day without a rate uses the previous day's).`
+          + (fxLatest?.unitsPerUsd ? ` Latest: 1 USD = ${Number(fxLatest.unitsPerUsd).toFixed(4)} ${currencyCode} (${fxLatest.rateDate}).` : '');
     const displayMode = canToggleCcy && usdDisplay ? 'USD' : 'LOCAL';
     // Pushed during render — not in an effect — so the children remounted by
     // the keyed Outlet below always format with the already-current mode
@@ -446,7 +478,7 @@ const Layout = () => {
                         value={usdDisplay ? 'USD' : 'LOCAL'}
                         onChange={(e) => setUsdDisplay(e.target.value === 'USD')}
                         aria-label="Display currency"
-                        title={`Executive pages display currency. USD figures are converted at 1 ${currencyCode} = ${USD_PER_UNIT[currencyCode]} USD (indicative; as of ${FX_RATE_AS_OF}).`}
+                        title={ccyTitle}
                         style={{
                             height: 28, borderRadius: 'var(--radius-sm)',
                             background: 'var(--bg-card)', border: '1px solid var(--border)',
@@ -456,8 +488,17 @@ const Layout = () => {
                         }}
                     >
                         <option value="LOCAL">{currencyCode} · local</option>
-                        <option value="USD">USD</option>
+                        <option value="USD">{USD_PER_UNIT[currencyCode] ? 'USD' : 'USD · daily rates'}</option>
                     </select>
+                )}
+                {/* Floating currency: show the latest rate so the number next to it has a reference */}
+                {canToggleCcy && usdDisplay && fxLatest?.unitsPerUsd && (
+                    <span title={ccyTitle} style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-secondary)',
+                        whiteSpace: 'nowrap',
+                    }}>
+                        1 USD = {Number(fxLatest.unitsPerUsd).toFixed(2)} {currencyCode} · {fxLatest.rateDate}
+                    </span>
                 )}
                 {/* Tenant tag */}
                 {activeTenant?.bankName && (

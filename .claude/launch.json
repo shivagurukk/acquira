@@ -2,6 +2,19 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "frontend-8091",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set BACKEND_PORT=8091&& npm run dev -- --port 5176 --strictPort"],
+      "cwd": "frontend",
+      "port": 5176
+    },
+    {
+      "name": "backend-jar",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set SQL_INIT_MODE=never&& set DB_URL=jdbc:postgresql://127.0.0.1:5433/postgres?reWriteBatchedInserts=true&& set DB_USERNAME=postgres&& set DB_PASSWORD=postgres&& E:\\tools\\jdk-21.0.9+10\\bin\\java.exe -jar acquira-core\\target\\acquira-core-1.0.0-SNAPSHOT.jar --server.port=8091 --app.cors.origins=http://localhost:5176"],
+      "port": 8091
+    },
+    {
       "name": "backend",
       "runtimeExecutable": "mvn",
       "runtimeArgs": ["spring-boot:run", "-pl", "acquira-core", "-o", "-Dspring-boot.run.arguments=--spring.sql.init.mode=never"],
@@ -26,6 +39,30 @@
       "runtimeArgs": ["run", "dev", "--", "--port", "5173", "--strictPort"],
       "cwd": "frontend",
       "port": 5173
+    },
+    {
+      "name": "bms-mock-api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["E:\\Acquira UAT\\BMS\\fraud-dev-kit\\mock-api\\server.js"],
+      "port": 8099
+    },
+    {
+      "name": "bms-portal",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "E:\\Acquira UAT\\BMS\\fraud-dev-kit\\mock-api\\start-portal.cmd"],
+      "port": 3011
+    },
+    {
+      "name": "bms-mock-api-p4",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "E:\\Acquira UAT\\BMS\\fraud-dev-kit\\mock-api\\start-mock-p4.cmd"],
+      "port": 8098
+    },
+    {
+      "name": "bms-portal-p4",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "E:\\Acquira UAT\\BMS\\fraud-dev-kit\\mock-api\\start-portal-p4.cmd"],
+      "port": 3012
     },
     {
       "name": "frontend-8082",
