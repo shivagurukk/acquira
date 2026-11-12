@@ -34,7 +34,13 @@ import java.util.Map;
 @RequestMapping("/api/fx")
 public class FxRateController {
 
-    private static final int MAX_DAYS = 800; // ~2 years + a margin: a LAST_YEAR + prior-year comparison
+    // The Executive Dashboard loads ONE series for everything it can show: from
+    // 1 January two years back (the Last-Year-vs-prior-year comparison) through its
+    // effective date. That is up to 3 calendar years = 1,096 days. The cap was 800,
+    // so from mid-March every such request was refused with 400 and the page fell
+    // back, silently, to the trailing-window series - converting a floating
+    // currency at the wrong rate. Keep this >= the widest range a page requests.
+    private static final int MAX_DAYS = 1100;
 
     private final FxRateService fxRateService;
     private final CurrencyResolver currencyResolver;

@@ -444,7 +444,11 @@ const Dashboard = () => {
     const eff = data?.effectiveDate || null;                 // 'YYYY-MM-DD'
     const effYear = eff ? Number(eff.slice(0, 4)) : null;
     const seriesRange = useMemo(() => (eff ? { from: `${effYear - 2}-01-01`, to: eff } : null), [eff, effYear]);
-    useFxSeries(seriesRange);
+    // Keep the loaded series: its arrival must invalidate every memoised
+    // conversion below. The rates live in a module-level table the formatters
+    // read, so without this dependency the totals computed on the first render
+    // (still on the Layout's trailing-window rates) were never recomputed.
+    const fxSeries = useFxSeries(seriesRange);
     const usdMode = !!eff && isUsdDisplay(currencyCode);
     // Date range of the selected period and of its comparison baseline.
     const { periodRange, prevRange } = useMemo(() => {
@@ -477,8 +481,9 @@ const Dashboard = () => {
         const out = { ...b, fxUnitsPerUsd: 1 / rate };
         MONEY_KEYS.forEach(k => { if (b[k] != null) out[k] = num(b[k]) * rate; });
         return out;
+        // fxSeries is not read here, but the rate fxRateForRange returns depends on it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [usdMode, currencyCode]);
+    }, [usdMode, currencyCode, fxSeries]);
     const totals = useMemo(() => convertBucket(period?.totals, periodRange), [convertBucket, period, periodRange]);
     const prev = useMemo(() => convertBucket(period?.prev, prevRange), [convertBucket, period, prevRange]);
     // Money label/precision: figures are pre-converted, so the formatters get

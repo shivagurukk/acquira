@@ -40,7 +40,14 @@ export default function useFxSeries(range) {
                 setFxSeries(res.data);
                 setSeries(res.data);
             })
-            .catch(() => { if (!cancelled) setSeries(null); });
+            .catch(err => {
+                // A refused range (e.g. wider than the API's cap) leaves the page on the
+                // Layout's trailing-window rates, i.e. converting at the WRONG rate for
+                // its dates. Never let that happen silently.
+                console.warn(`[fx] daily-rate series ${from}..${to} failed`
+                    + ` (HTTP ${err?.response?.status ?? 'n/a'}); USD figures fall back to the default window rate`);
+                if (!cancelled) setSeries(null);
+            });
         return () => { cancelled = true; restoreDefaultFxSeries(); };
     }, [from, to, currencyCode, tenantVersion]);
 
