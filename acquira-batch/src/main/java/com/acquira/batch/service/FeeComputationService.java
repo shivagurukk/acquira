@@ -380,10 +380,14 @@ public class FeeComputationService {
                 "      AND s.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
                 "      AND s.channel = ch.channel " +
                 "      AND (s.scheme_group IS NULL OR s.scheme_group = COALESCE(rcs.group_name,'')) " +
+                // CARD TYPE (V2026_10_05_02): NULL = any card type; a card-type row
+                // (e.g. Mastercard domestic CREDIT, the Oct-2026 enablement fund)
+                // beats the any-type row for the same scheme.
+                "      AND (s.card_type IS NULL OR s.card_type = UPPER(TRIM(COALESCE(ft.card_type,'')))) " +
                 "      AND (s.effective_from IS NULL OR s.effective_from <= DATE(ft.payment_date)) " +
                 "      AND (s.effective_to   IS NULL OR s.effective_to   >= DATE(ft.payment_date)) " +
                 "    ORDER BY (s.rate_status = 'APPROVED') DESC, (s.tenant_id IS NOT NULL) DESC, " +
-                "             (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
+                "             (s.scheme_group IS NOT NULL) DESC, (s.card_type IS NOT NULL) DESC LIMIT 1 " +
                 "  ) sfr ON TRUE " +
                 // ECOM FLAT FEE (V2026_07_31_06, per-gateway since V2026_08_28_02):
                 // resolve the per-country flat fee the same country-level way. A row
