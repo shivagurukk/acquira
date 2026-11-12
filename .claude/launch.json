@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "backend-jdk25",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set SQL_INIT_MODE=never&& set ACQUIRA_ROLE=all&& C:\\tools\\jdk-25\\jdk-25.0.4.1+1\\bin\\java.exe -jar acquira-core\\target\\acquira-core-1.0.0-SNAPSHOT.jar --server.port=8081"],
+      "port": 8081
+    },
+    {
       "name": "frontend-8091",
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set BACKEND_PORT=8091&& npm run dev -- --port 5176 --strictPort"],
