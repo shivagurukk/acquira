@@ -24,8 +24,8 @@
         <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-jackson</artifactId><version>0.13.0</version><scope>runtime</scope></dependency>
         <!-- ShedLock — DB-backed lock so each scheduled job runs on ONE replica at a time
              (SchedulerLockConfig; table "shedlock", migration V2026_10_03_02). 7.x = Spring 7 / Boot 4 line. -->
-        <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-spring</artifactId><version>7.10.1</version></dependency>
-        <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-provider-jdbc-template</artifactId><version>7.10.1</version></dependency>
+        <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-spring</artifactId><version>7.11.0</version></dependency>
+        <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-provider-jdbc-template</artifactId><version>7.11.0</version></dependency>
         <!-- Smile ML — churn RandomForest (ChurnScoringService). Pure JVM, no native BLAS for trees. -->
         <dependency><groupId>com.github.haifengl</groupId><artifactId>smile-core</artifactId><version>2.6.0</version></dependency>
     </dependencies>

@@ -285,7 +285,7 @@ ls /home/acquira/.cache/ms-playwright/chromium-*/chrome-linux/chrome
 # Should show the chrome binary (~380MB)
 
 /home/acquira/.cache/ms-playwright/chromium-*/chrome-linux/chrome --version
-# Should show: Chromium 153.x (Playwright 1.63.0). The install also adds
+# Should show the Chromium build bundled with Playwright 1.65.0. The install also adds
 # chromium_headless_shell-*, which headless PDF rendering uses.
 # The folder may be chrome-linux64 instead of chrome-linux on newer builds.
 ```
@@ -346,16 +346,16 @@ You must pre-extract it manually:
 cd /opt/acquira/playwright-driver
 
 # Extract driver-bundle from the fat JAR
-jar xf /opt/acquira/app/acquira-core.jar BOOT-INF/lib/driver-bundle-1.63.0.jar
+jar xf /opt/acquira/app/acquira-core.jar BOOT-INF/lib/driver-bundle-1.65.0.jar
 
 # Unzip the driver contents
-unzip -o BOOT-INF/lib/driver-bundle-1.63.0.jar "driver/linux/*"
+unzip -o BOOT-INF/lib/driver-bundle-1.65.0.jar "driver/linux/*"
 
 # Verify
 ls -la driver/linux/
 # Must show: node, LICENSE
 # (Playwright 1.63: playwright.sh is gone and package/ now ships in
-#  BOOT-INF/lib/driver-1.63.0.jar, which the app extracts itself at startup.)
+#  BOOT-INF/lib/driver-1.65.0.jar, which the app extracts itself at startup.)
 
 # Verify node binary works
 chmod +x driver/linux/node
@@ -652,7 +652,7 @@ As root:
 
 ```bash
 # Re-extract Playwright driver if acquira-pdf changed
-su - acquira -c "cd /opt/acquira/playwright-driver && rm -rf driver BOOT-INF META-INF && jar xf /opt/acquira/app/acquira-core.jar BOOT-INF/lib/driver-bundle-1.63.0.jar && unzip -o BOOT-INF/lib/driver-bundle-1.63.0.jar 'driver/linux/*' && chmod +x driver/linux/node && rm -rf BOOT-INF META-INF"
+su - acquira -c "cd /opt/acquira/playwright-driver && rm -rf driver BOOT-INF META-INF && jar xf /opt/acquira/app/acquira-core.jar BOOT-INF/lib/driver-bundle-1.65.0.jar && unzip -o BOOT-INF/lib/driver-bundle-1.65.0.jar 'driver/linux/*' && chmod +x driver/linux/node && rm -rf BOOT-INF META-INF"
 
 systemctl restart acquira
 journalctl -u acquira -f
@@ -727,8 +727,8 @@ The Playwright Node.js driver isn't pre-extracted. Fix:
 ```bash
 cd /opt/acquira/playwright-driver
 rm -rf driver BOOT-INF META-INF
-jar xf /opt/acquira/app/acquira-core.jar BOOT-INF/lib/driver-bundle-1.63.0.jar
-unzip -o BOOT-INF/lib/driver-bundle-1.63.0.jar "driver/linux/*"
+jar xf /opt/acquira/app/acquira-core.jar BOOT-INF/lib/driver-bundle-1.65.0.jar
+unzip -o BOOT-INF/lib/driver-bundle-1.65.0.jar "driver/linux/*"
 chmod +x driver/linux/node
 rm -rf BOOT-INF META-INF
 ```
@@ -824,7 +824,7 @@ These changes were already made to the source code:
 <dependency>
     <groupId>com.microsoft.playwright</groupId>
     <artifactId>driver-bundle</artifactId>
-    <version>1.63.0</version>
+    <version>1.65.0</version>
 </dependency>
 ```
 

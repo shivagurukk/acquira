@@ -8,24 +8,24 @@
 #   docker build -t acquira-core:slim --target slim -f deploy/docker/Dockerfile.core .
 #   docker build -t acquira-core:full               -f deploy/docker/Dockerfile.core .
 #
-# PDF engine = Playwright 1.63.0 (driver-bundle) which manages its OWN Chromium.
+# PDF engine = Playwright 1.65.0 (driver-bundle) which manages its OWN Chromium.
 # We copy the EXACT version-matched browser from Microsoft's official Playwright
-# image (pinned to v1.63.0). No distro 'chromium' package is installed here.
+# image (pinned to v1.65.0). No distro 'chromium' package is installed here.
 # The base must be glibc (Debian/Ubuntu): Playwright's bundled Node driver and
 # Chromium do not run on Alpine/musl.
 # =============================================================================
 
 # ---- build the fat JAR ----
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-25 AS build
 WORKDIR /src
 COPY . .
 RUN mvn -B -pl acquira-core -am -DskipTests package
 
 # ---- matching Chromium (already at /ms-playwright in this image) ----
-FROM mcr.microsoft.com/playwright/java:v1.63.0-jammy AS browsers
+FROM mcr.microsoft.com/playwright/java:v1.65.0-jammy AS browsers
 
 # ---- slim: core + batch pods ----
-FROM eclipse-temurin:21-jre AS slim
+FROM eclipse-temurin:25-jre AS slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*

@@ -111,8 +111,8 @@ is surprised):
 
 - **Actuator IS present** (health + info only). Probes use
   `/actuator/health/liveness` and `/readiness`.
-- **Playwright 1.63.0 (driver-bundle) manages its own Chromium.** `Dockerfile.core`
-  copies the version-matched browser from `mcr.microsoft.com/playwright/java:v1.63.0-jammy`,
+- **Playwright 1.65.0 (driver-bundle) manages its own Chromium.** `Dockerfile.core`
+  copies the version-matched browser from `mcr.microsoft.com/playwright/java:v1.65.0-jammy`,
   so there is no distro-Chromium mismatch. Your Docker Desktop must be able to pull
   from `mcr.microsoft.com` (it can by default).
 - **PDF smoke test after first boot:** trigger a statement/insight PDF and confirm a

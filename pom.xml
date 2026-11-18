@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/>
     </parent>
     <groupId>com.acquira</groupId>
@@ -15,25 +15,27 @@
     <packaging>pom</packaging>
     <description>Multi-module Merchant Analytics Platform</description>
     <properties>
-        <java.version>21</java.version>
+        <java.version>25</java.version>
         <jjwt.version>0.13.0</jjwt.version>
-        <aws.sdk.version>2.55.11</aws.sdk.version>
+        <aws.sdk.version>2.59.1</aws.sdk.version>
         <lombok.version>1.18.48</lombok.version>
         <!-- Pin Spring Boot's managed JDBC driver versions to the patched
              releases so transitive resolution matches the direct declarations
              in acquira-batch (no version skew across modules). -->
-        <mssql-jdbc.version>12.10.2.jre11</mssql-jdbc.version>
-        <oracle-database.version>23.26.3.0.0</oracle-database.version>
-        <!-- Held at 42.7.11 (Boot 4.1.1 manages 42.7.13). On 42.7.13 a large
+        <mssql-jdbc.version>13.6.2.jre11</mssql-jdbc.version>
+        <oracle-database.version>23.26.4.0.0</oracle-database.version>
+        <!-- Held at 42.7.12 (Boot 4.1.2 manages 42.7.14). On 42.7.13 a large
              reWriteBatchedInserts batch with untyped date/timestamp binds
              (setTimestamp/setDate/setNull — every staging writer in
              acquira-batch) deadlocks: the driver blocks in sendBind while the
              server blocks in ClientWrite, and the ingest hangs forever.
              Deterministic with 16 KB socket buffers, intermittent on defaults;
-             42.7.7 and 42.7.11 are immune down to 1 KB. Re-test a 100k-row
-             upload with ...data-source-properties.receiveBufferSize=16384
-             before raising this. -->
-        <postgresql.version>42.7.11</postgresql.version>
+             42.7.7, 42.7.11 and 42.7.12 are immune down to 1 KB. 42.7.12 is
+             the minimum for CVE-2026-54291 (channelBinding downgrade). Re-test
+             a 100k-row upload with
+             ...data-source-properties.receiveBufferSize=16384 before raising
+             this. -->
+        <postgresql.version>42.7.12</postgresql.version>
         <openpdf.version>3.0.5</openpdf.version>
         <jfreechart.version>1.5.6</jfreechart.version>
         <!-- Smile ML (pure-JVM: no native BLAS needed for RandomForest) -->
@@ -89,7 +91,7 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>3.1.1</version>
+            <version>3.2.0</version>
         </dependency>
 
         <!-- ===== TEST DEPENDENCIES ===== -->
@@ -127,6 +129,24 @@
     </dependencyManagement>
     <build>
         <plugins>
+            <!-- Java 25 on this branch only. Maven itself may run on any JDK: if it is
+                 already 25 (Docker build) that JDK is used, otherwise compile, tests and
+                 spring-boot:run switch to the JDK 25 entry in ~/.m2/toolchains.xml. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-toolchains-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>select-jdk-toolchain</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <version>[25,26)</version>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
