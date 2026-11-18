@@ -1,24 +1,50 @@
-# Fresh database kit
+# Database kit: fresh install and production upgrade
 
-Creates a new, empty-of-business-data database for the application: full schema (DDL) plus
-reference and seed data (DML), in one guarded script.
+Two single-file scripts, both generated from the repository's SQL:
+
+- **`out/acquira_fresh_install.sql`** creates a NEW database: full schema (DDL) plus reference and
+  seed data (DML), in one guarded transaction.
+- **`out/acquira_prod_upgrade.sql`** upgrades an EXISTING database (UAT, production) and keeps all
+  its data. How to run it on production: [PROD_UPGRADE.md](PROD_UPGRADE.md).
 
 ## Files
 
 | File | What it is |
 |---|---|
-| `build_fresh_db_kit.py` | Generator. Rebuilds everything in `out/` from the repository's SQL. |
-| `out/00_create_fresh_db.sql` | **The meta script.** Run this one. Refuses a non-empty database, then runs the two files below in a single transaction and prints a verification summary. |
+| `build_fresh_db_kit.py` | Generator for the fresh-install files below. |
+| `build_prod_upgrade.py` | Generator for the upgrade script; also verifies it (no-op, worst case, superseded, realistic, dry run, refusals) and fails if any check fails. Run it after `build_fresh_db_kit.py`. |
+| `out/acquira_fresh_install.sql` | **New database, one file.** The meta script below with `01` and `02` inlined. |
+| `out/00_create_fresh_db.sql` | The same as a meta script: refuses a non-empty database, then runs the two files below in a single transaction and prints a verification summary. |
 | `out/01_ddl.sql` | Schema only: tables, partitions, indexes, constraints, row-level security, functions, sequences. |
 | `out/02_dml_reference.sql` | Data only: reference tables, rate cards, menus and RBAC, the seed institution and the admin account, the migration ledger. |
+| `out/acquira_prod_upgrade.sql` | **Existing database, one file.** Applies each migration the database's `schema_migration_log` does not record, one transaction each. |
 | `out/chain_order.txt` | The source scripts the kit was built from, in the order they were applied. |
+
+## Upgrade an existing database
+
+```
+psql -h <host> -U <user> -d <db> -v DRY_RUN=1 -f scripts/freshdb/out/acquira_prod_upgrade.sql   # plan only
+psql -h <host> -U <user> -d <db> -f scripts/freshdb/out/acquira_prod_upgrade.sql                # apply
+```
+
+It covers the 84 migrations applied by hand after the init chain (`schema.sql`, `data.sql` and the
+81 scripts in `spring.sql.init.schema-locations`), which it does not re-run and whose tables it
+requires. Many older migrations never recorded themselves in `schema_migration_log`, so a live
+database can have a migration without its ledger row; the upgrade then runs it again. The
+generator therefore re-runs every migration alone on a current database during development, and
+its verification proves that re-running all 37 that may lack a ledger row changes nothing. The one
+migration whose re-run would undo a later one, the draft Egypt Mastercard tiers
+(`V2026_08_30_01`), is recorded without running when its replacement (`V2026_10_26_02`) is
+already applied. Comparisons ignore timestamps, generated ids, partition index names and the
+`rbac_version` counter.
 
 ## Create a database
 
 ```
 createdb -h <host> -U <user> <new_db>
-psql -h <host> -U <user> -d <new_db> -f scripts/freshdb/out/00_create_fresh_db.sql
+psql -h <host> -U <user> -d <new_db> -f scripts/freshdb/out/acquira_fresh_install.sql
 ```
+(`00_create_fresh_db.sql` does the same with `01` and `02` as separate files beside it.)
 
 Needs psql 12 or later and PostgreSQL 15 or later (the schema uses `NULLS NOT DISTINCT`).
 It was generated and tested on PostgreSQL 18.1; it has not been run on other versions.
@@ -85,13 +111,24 @@ Left out on purpose:
 
 ```
 python scripts/freshdb/build_fresh_db_kit.py
+python scripts/freshdb/build_prod_upgrade.py
 ```
+If the new migration should not be re-run on a database that already has a later one replacing
+it, add it to `SUPERSEDED_BY` in `build_prod_upgrade.py`. The second command's "worst case" check
+fails when a re-run changes data.
 
 Options: `--host`, `--port`, `--user`, `--password`, `--pg-bin`, `--scratch-db`, `--keep`.
 It needs a PostgreSQL server it can create and drop a scratch database on, and a `pg_dump` at
 least as new as that server. Any SQL error in the chain stops the build and names the script.
 
-## How it was verified (2026-11-12)
+## How it was verified
+
+Regenerated 2026-11-14 from 166 scripts (84 later migrations, including five MIS/RBAC migrations
+not yet committed): no SQL errors, 232 tables, 724 indexes, 65 RLS policies. The upgrade script
+passed all its generator checks the same day. The application run below was done on the
+2026-11-12 build and has not been repeated on this one.
+
+### 2026-11-12
 
 - All 162 source scripts applied with no SQL errors.
 - The meta script was run on a new empty database: 213 tables, 677 indexes, 57 RLS policies.

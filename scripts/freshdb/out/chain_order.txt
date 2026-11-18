@@ -1,4 +1,4 @@
-# Source scripts applied, in order, to build this kit (2026-11-12 11:16, commit 49b891c + uncommitted SQL changes).
+# Source scripts applied, in order, to build this kit (2026-11-18 10:16, commit b5be4e7).
 schema.sql
 schema_extras.sql
 db/migration/V2026_02_28_01__new_screens_security_alerts_api.sql
@@ -161,6 +161,10 @@ db/migration/V2026_10_28_01__fx_rate_daily.sql
 db/migration/V2026_10_28_02__fx_rate_daily_egp_seed.sql
 db/migration/V2026_10_28_03__volume_revenue_mix_menu.sql
 db/migration/V2026_11_11_01__jaywan_scheme_register.sql
+db/migration/V2026_11_12_01__mis_price_builder.sql
+db/migration/V2026_11_12_02__mis_scheme_fee_optimizer.sql
+db/migration/V2026_11_13_01__mis_fee_optimizer_routing.sql
+db/migration/V2026_11_13_02__mis_integrity_fee_patterns.sql
 
 # Excluded as obsolete on a fresh database:
 #   V2026_02_21__gap_fixes.sql - makes users.email NOT NULL + UNIQUE; the application has since made email optional (UserController stores NULL), so a user without an email could not be created. Also fails on line 30 (references users.id; the column is user_id).

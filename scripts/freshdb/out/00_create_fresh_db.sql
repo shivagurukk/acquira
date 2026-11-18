@@ -1,8 +1,8 @@
 -- =============================================================================
 -- 00_create_fresh_db.sql  -  create a FRESH Acquira/Nexus database (DDL + DML)
 --
--- Generated 2026-11-12 11:16 by scripts/freshdb/build_fresh_db_kit.py from the repository at
--- commit 49b891c + uncommitted SQL changes. Do not edit by hand - regenerate.
+-- Generated 2026-11-18 10:16 by scripts/freshdb/build_fresh_db_kit.py from the repository at
+-- commit b5be4e7. Do not edit by hand - regenerate.
 --
 -- WHAT IT DOES
 --   1. Refuses to run unless the target database is EMPTY (no tables in schema public).
@@ -20,11 +20,11 @@
 --   psql ... -v ADMIN_HASH='$2a$10$...' -f 00_create_fresh_db.sql
 --
 -- WHAT YOU GET
---   213 tables, 677 indexes, 57 row-level-security policies, 129 sequences.
+--   232 tables, 724 indexes, 65 row-level-security policies, 146 sequences.
 --   Reference data: 236 countries, 21 card schemes, 296 MCC categories,
---   4869 interchange rows, 144 scheme-fee rows, 1833 daily FX rates, 77 menus.
+--   4869 interchange rows, 144 scheme-fee rows, 1833 daily FX rates, 79 menus.
 --   One seed institution (ACQ / AE / AED) and one account (admin, password change forced at first login).
---   The migration ledger (schema_migration_log) lists all 162 source scripts as applied.
+--   The migration ledger (schema_migration_log) lists all 166 source scripts as applied.
 --
 -- WHAT IT DOES NOT LOAD
 --   BIN ranges (ref_bin_range) - load them through BIN Management after go-live.

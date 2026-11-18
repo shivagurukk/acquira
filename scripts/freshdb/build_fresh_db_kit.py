@@ -288,11 +288,20 @@ def main():
         w('01_ddl.sql', '-- 01_ddl.sql - schema only.\n' + head + ddl)
         w('02_dml_reference.sql', '-- 02_dml_reference.sql - reference and seed data only.\n' + head + dml)
         w('00_create_fresh_db.sql', MASTER % facts)
+        # The same meta script with 01 and 02 inlined: ONE self-contained file to hand over.
+        single = (MASTER % facts).replace('00_create_fresh_db.sql  -  create', 'acquira_fresh_install.sql  -  create', 1)
+        single = single.replace('psql -h <host> -U <user> -d <new_db> -f 00_create_fresh_db.sql',
+                                'psql -h <host> -U <user> -d <new_db> -f acquira_fresh_install.sql')
+        single = single.replace('\\ir 01_ddl.sql\n', '-- ---- schema (same content as 01_ddl.sql) ----\n' + ddl + '\n', 1)
+        single = single.replace('\\ir 02_dml_reference.sql\n', '-- ---- reference data (same content as 02_dml_reference.sql) ----\n' + dml + '\n', 1)
+        if '\\ir ' in single:
+            raise SystemExit('single-file fresh install still contains an \\ir include')
+        w('acquira_fresh_install.sql', single)
         w('chain_order.txt',
           '# Source scripts applied, in order, to build this kit (%s, commit %s).\n' % (stamp, commit)
           + '\n'.join(order) + '\n\n# Excluded as obsolete on a fresh database:\n'
           + '\n'.join('#   %s - %s' % kv for kv in OBSOLETE.items()) + '\n')
-        for name in ('00_create_fresh_db.sql', '01_ddl.sql', '02_dml_reference.sql', 'chain_order.txt'):
+        for name in ('00_create_fresh_db.sql', '01_ddl.sql', '02_dml_reference.sql', 'acquira_fresh_install.sql', 'chain_order.txt'):
             p = os.path.join(OUT, name)
             print('  wrote %-26s %9d bytes' % (name, os.path.getsize(p)))
         print('kit facts:', {k: v for k, v in facts.items() if k not in ('stamp', 'commit')})

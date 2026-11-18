@@ -1,5 +1,5 @@
 -- 01_ddl.sql - schema only.
--- Generated 2026-11-12 11:16 by scripts/freshdb/build_fresh_db_kit.py (repository commit 49b891c + uncommitted SQL changes).
+-- Generated 2026-11-18 10:16 by scripts/freshdb/build_fresh_db_kit.py (repository commit b5be4e7).
 -- Part of the fresh-database kit: run 00_create_fresh_db.sql, not this file on its own.
 
 --
@@ -3020,6 +3020,322 @@ ALTER SEQUENCE public.password_reset_token_token_id_seq OWNED BY public.password
 
 
 --
+-- Name: pb_country_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_country_config (
+    country_code character varying(2) NOT NULL,
+    country_name character varying(60) NOT NULL,
+    currency_code character varying(3) NOT NULL,
+    usd_rate numeric(18,8) NOT NULL,
+    ecom_ic_uplift numeric(9,6) DEFAULT 0 NOT NULL,
+    target_margin numeric(9,6) DEFAULT 0.0025 NOT NULL,
+    intl_msf_pos numeric(9,6) DEFAULT 0.025 NOT NULL,
+    intl_msf_ecom numeric(9,6) DEFAULT 0.026 NOT NULL,
+    dcc_scheme_fee_pos numeric(9,6) DEFAULT 0.004 NOT NULL,
+    dcc_scheme_fee_ecom numeric(9,6) DEFAULT 0.010 NOT NULL,
+    debit_intl_txn_fee numeric(19,6) DEFAULT 0 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    display_order integer DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: pb_mcc; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_mcc (
+    id bigint NOT NULL,
+    country_code character varying(2) NOT NULL,
+    mcc character varying(4) NOT NULL,
+    sector character varying(40) NOT NULL,
+    description character varying(160) NOT NULL,
+    mcc_type character varying(20) DEFAULT 'NORMAL'::character varying NOT NULL
+);
+
+
+--
+-- Name: pb_mcc_cost; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_mcc_cost (
+    id bigint NOT NULL,
+    country_code character varying(2) NOT NULL,
+    mcc character varying(4) NOT NULL,
+    scheme character varying(20) NOT NULL,
+    locality character varying(20) NOT NULL,
+    tier character varying(20),
+    ic_pct numeric(9,6) NOT NULL,
+    cap_amount numeric(19,4),
+    source character varying(40) DEFAULT 'IMPORT'::character varying NOT NULL,
+    imported_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: pb_mcc_cost_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_mcc_cost_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_mcc_cost_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_mcc_cost_id_seq OWNED BY public.pb_mcc_cost.id;
+
+
+--
+-- Name: pb_mcc_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_mcc_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_mcc_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_mcc_id_seq OWNED BY public.pb_mcc.id;
+
+
+--
+-- Name: pb_payment_gateway; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_payment_gateway (
+    id bigint NOT NULL,
+    code character varying(30) NOT NULL,
+    label character varying(60) NOT NULL,
+    cost_per_txn numeric(19,6) NOT NULL,
+    is_active boolean DEFAULT true NOT NULL
+);
+
+
+--
+-- Name: pb_payment_gateway_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_payment_gateway_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_payment_gateway_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_payment_gateway_id_seq OWNED BY public.pb_payment_gateway.id;
+
+
+--
+-- Name: pb_quote; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_quote (
+    quote_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    quote_ref character varying(30) NOT NULL,
+    merchant_name character varying(160) NOT NULL,
+    country_code character varying(2) NOT NULL,
+    channel character varying(20) NOT NULL,
+    mcc character varying(4),
+    annual_volume numeric(19,2),
+    total_txns bigint,
+    effective_msf numeric(9,6),
+    blended_ic numeric(9,6),
+    blended_sf numeric(9,6),
+    net_spread_usd numeric(19,4),
+    margin_per_txn numeric(19,6),
+    status character varying(20) DEFAULT 'DRAFT'::character varying NOT NULL,
+    inputs text NOT NULL,
+    results text NOT NULL,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: pb_quote_quote_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_quote_quote_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_quote_quote_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_quote_quote_id_seq OWNED BY public.pb_quote.quote_id;
+
+
+--
+-- Name: pb_scheme_fee; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_scheme_fee (
+    id bigint NOT NULL,
+    country_code character varying(2) NOT NULL,
+    scheme character varying(20) NOT NULL,
+    locality character varying(20) NOT NULL,
+    fee_pct numeric(9,6) NOT NULL
+);
+
+
+--
+-- Name: pb_scheme_fee_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_scheme_fee_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_scheme_fee_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_scheme_fee_id_seq OWNED BY public.pb_scheme_fee.id;
+
+
+--
+-- Name: pb_scheme_row; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_scheme_row (
+    id bigint NOT NULL,
+    country_code character varying(2) NOT NULL,
+    scheme_key character varying(40) NOT NULL,
+    label character varying(60) NOT NULL,
+    scheme character varying(20) NOT NULL,
+    locality character varying(20) NOT NULL,
+    tier character varying(20),
+    card_type character varying(20) NOT NULL,
+    display_order integer DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: pb_scheme_row_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_scheme_row_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_scheme_row_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_scheme_row_id_seq OWNED BY public.pb_scheme_row.id;
+
+
+--
+-- Name: pb_sector_cost; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_sector_cost (
+    id bigint NOT NULL,
+    country_code character varying(2) NOT NULL,
+    sector character varying(40) NOT NULL,
+    scheme character varying(20) NOT NULL,
+    locality character varying(20) NOT NULL,
+    tier character varying(20),
+    ic_pct numeric(9,6) NOT NULL
+);
+
+
+--
+-- Name: pb_sector_cost_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_sector_cost_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_sector_cost_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_sector_cost_id_seq OWNED BY public.pb_sector_cost.id;
+
+
+--
+-- Name: pb_special_rule; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pb_special_rule (
+    id bigint NOT NULL,
+    country_code character varying(2) NOT NULL,
+    mcc character varying(4),
+    scheme character varying(20),
+    locality character varying(20),
+    card_type character varying(20),
+    channel character varying(20),
+    mcc_type character varying(20),
+    rule_type character varying(20) NOT NULL,
+    threshold numeric(19,4),
+    small_rate numeric(9,6),
+    large_rate numeric(9,6),
+    flat_rate numeric(9,6),
+    amount_local numeric(19,6),
+    amount_is_usd boolean DEFAULT false NOT NULL,
+    priority integer DEFAULT 0 NOT NULL,
+    note character varying(200)
+);
+
+
+--
+-- Name: pb_special_rule_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pb_special_rule_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pb_special_rule_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pb_special_rule_id_seq OWNED BY public.pb_special_rule.id;
+
+
+--
 -- Name: pdf_batch_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3888,6 +4204,384 @@ CREATE SEQUENCE public.scheme_fee_rate_id_seq
 --
 
 ALTER SEQUENCE public.scheme_fee_rate_id_seq OWNED BY public.scheme_fee_rate.id;
+
+
+--
+-- Name: sfo_classification_override; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_classification_override (
+    override_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    scheme character varying(20) NOT NULL,
+    event_code character varying(60) NOT NULL,
+    category character varying(30) NOT NULL,
+    note character varying(400),
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: sfo_classification_override_override_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_classification_override_override_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_classification_override_override_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_classification_override_override_id_seq OWNED BY public.sfo_classification_override.override_id;
+
+
+--
+-- Name: sfo_classification_pattern; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_classification_pattern (
+    pattern_id bigint NOT NULL,
+    scheme character varying(20),
+    match_text character varying(80) NOT NULL,
+    category character varying(30) NOT NULL,
+    confidence numeric(5,2) DEFAULT 60 NOT NULL,
+    priority integer DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: sfo_classification_pattern_pattern_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_classification_pattern_pattern_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_classification_pattern_pattern_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_classification_pattern_pattern_id_seq OWNED BY public.sfo_classification_pattern.pattern_id;
+
+
+--
+-- Name: sfo_entity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_entity (
+    entity_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    entity_code character varying(40) NOT NULL,
+    entity_name character varying(160) NOT NULL,
+    scheme character varying(20),
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: sfo_entity_entity_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_entity_entity_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_entity_entity_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_entity_entity_id_seq OWNED BY public.sfo_entity.entity_id;
+
+
+--
+-- Name: sfo_event_dictionary; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_event_dictionary (
+    dict_id bigint NOT NULL,
+    tenant_id integer,
+    scheme character varying(20) NOT NULL,
+    event_code character varying(60) NOT NULL,
+    description character varying(400),
+    category character varying(30) NOT NULL,
+    explanation character varying(1000),
+    confidence numeric(5,2) DEFAULT 50 NOT NULL,
+    learned boolean DEFAULT true NOT NULL,
+    first_seen timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_by character varying(100)
+);
+
+
+--
+-- Name: sfo_event_dictionary_dict_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_event_dictionary_dict_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_event_dictionary_dict_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_event_dictionary_dict_id_seq OWNED BY public.sfo_event_dictionary.dict_id;
+
+
+--
+-- Name: sfo_fee_line; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_fee_line (
+    line_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    upload_id bigint NOT NULL,
+    period_year integer NOT NULL,
+    period_month integer NOT NULL,
+    scheme character varying(20) NOT NULL,
+    entity_code character varying(40),
+    event_code character varying(60),
+    description character varying(400),
+    quantity numeric(19,4),
+    unit_rate numeric(19,8),
+    amount numeric(19,4) NOT NULL,
+    currency_code character varying(3) NOT NULL,
+    amount_usd numeric(19,4) NOT NULL,
+    category character varying(30) DEFAULT 'OTHER'::character varying NOT NULL,
+    confidence numeric(5,2) DEFAULT 0 NOT NULL,
+    classified_by character varying(20) DEFAULT 'PATTERN'::character varying NOT NULL,
+    source_row integer,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: sfo_fee_line_line_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_fee_line_line_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_fee_line_line_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_fee_line_line_id_seq OWNED BY public.sfo_fee_line.line_id;
+
+
+--
+-- Name: sfo_fx_rate; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_fx_rate (
+    currency_code character varying(3) NOT NULL,
+    usd_rate numeric(18,8) NOT NULL,
+    note character varying(80)
+);
+
+
+--
+-- Name: sfo_opportunity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_opportunity (
+    opportunity_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    fingerprint character varying(120) NOT NULL,
+    finding_type character varying(30) NOT NULL,
+    severity character varying(10) DEFAULT 'MEDIUM'::character varying NOT NULL,
+    scheme character varying(20),
+    entity_code character varying(40),
+    event_code character varying(60),
+    description character varying(400),
+    period_year integer,
+    period_month integer,
+    currency_code character varying(3),
+    monthly_value numeric(19,4) DEFAULT 0 NOT NULL,
+    annualised_value numeric(19,4) DEFAULT 0 NOT NULL,
+    monthly_value_usd numeric(19,4) DEFAULT 0 NOT NULL,
+    annualised_value_usd numeric(19,4) DEFAULT 0 NOT NULL,
+    status character varying(20) DEFAULT 'FLAGGED'::character varying NOT NULL,
+    evidence text,
+    note character varying(1000),
+    detected_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_by character varying(100),
+    category character varying(30),
+    team_code character varying(40),
+    assignee character varying(100),
+    due_date date,
+    routed_at timestamp without time zone,
+    routed_by character varying(10)
+);
+
+
+--
+-- Name: sfo_opportunity_opportunity_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_opportunity_opportunity_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_opportunity_opportunity_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_opportunity_opportunity_id_seq OWNED BY public.sfo_opportunity.opportunity_id;
+
+
+--
+-- Name: sfo_routing_rule; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_routing_rule (
+    rule_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    finding_type character varying(30),
+    category character varying(30),
+    scheme character varying(20),
+    match_text character varying(80),
+    team_code character varying(40) NOT NULL,
+    sla_days integer,
+    priority integer DEFAULT 0 NOT NULL,
+    note character varying(300),
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    created_by character varying(100)
+);
+
+
+--
+-- Name: sfo_routing_rule_rule_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_routing_rule_rule_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_routing_rule_rule_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_routing_rule_rule_id_seq OWNED BY public.sfo_routing_rule.rule_id;
+
+
+--
+-- Name: sfo_team; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_team (
+    team_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    team_code character varying(40) NOT NULL,
+    team_name character varying(120) NOT NULL,
+    description character varying(400),
+    default_sla_days integer DEFAULT 14 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    display_order integer DEFAULT 0 NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: sfo_team_team_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_team_team_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_team_team_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_team_team_id_seq OWNED BY public.sfo_team.team_id;
+
+
+--
+-- Name: sfo_upload; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sfo_upload (
+    upload_id bigint NOT NULL,
+    tenant_id integer NOT NULL,
+    file_name character varying(255) NOT NULL,
+    file_size bigint,
+    content_hash character varying(64),
+    scheme character varying(20),
+    entity_code character varying(40),
+    period_year integer,
+    period_month integer,
+    invoice_ref character varying(60),
+    currency_code character varying(3),
+    invoice_total numeric(19,4),
+    parsed_total numeric(19,4),
+    line_count integer DEFAULT 0 NOT NULL,
+    status character varying(20) DEFAULT 'QUEUED'::character varying NOT NULL,
+    detection text,
+    staged_lines text,
+    error_message character varying(1000),
+    uploaded_by character varying(100),
+    uploaded_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    confirmed_by character varying(100),
+    confirmed_at timestamp without time zone
+);
+
+
+--
+-- Name: sfo_upload_upload_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.sfo_upload_upload_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: sfo_upload_upload_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.sfo_upload_upload_id_seq OWNED BY public.sfo_upload.upload_id;
 
 
 --
@@ -7830,6 +8524,62 @@ ALTER TABLE ONLY public.password_reset_token ALTER COLUMN token_id SET DEFAULT n
 
 
 --
+-- Name: pb_mcc id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc ALTER COLUMN id SET DEFAULT nextval('public.pb_mcc_id_seq'::regclass);
+
+
+--
+-- Name: pb_mcc_cost id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc_cost ALTER COLUMN id SET DEFAULT nextval('public.pb_mcc_cost_id_seq'::regclass);
+
+
+--
+-- Name: pb_payment_gateway id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_payment_gateway ALTER COLUMN id SET DEFAULT nextval('public.pb_payment_gateway_id_seq'::regclass);
+
+
+--
+-- Name: pb_quote quote_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_quote ALTER COLUMN quote_id SET DEFAULT nextval('public.pb_quote_quote_id_seq'::regclass);
+
+
+--
+-- Name: pb_scheme_fee id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_fee ALTER COLUMN id SET DEFAULT nextval('public.pb_scheme_fee_id_seq'::regclass);
+
+
+--
+-- Name: pb_scheme_row id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_row ALTER COLUMN id SET DEFAULT nextval('public.pb_scheme_row_id_seq'::regclass);
+
+
+--
+-- Name: pb_sector_cost id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_sector_cost ALTER COLUMN id SET DEFAULT nextval('public.pb_sector_cost_id_seq'::regclass);
+
+
+--
+-- Name: pb_special_rule id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_special_rule ALTER COLUMN id SET DEFAULT nextval('public.pb_special_rule_id_seq'::regclass);
+
+
+--
 -- Name: pdf_batch_log id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -7967,6 +8717,69 @@ ALTER TABLE ONLY public.schema_migration_registry ALTER COLUMN registry_id SET D
 --
 
 ALTER TABLE ONLY public.scheme_fee_rate ALTER COLUMN id SET DEFAULT nextval('public.scheme_fee_rate_id_seq'::regclass);
+
+
+--
+-- Name: sfo_classification_override override_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_classification_override ALTER COLUMN override_id SET DEFAULT nextval('public.sfo_classification_override_override_id_seq'::regclass);
+
+
+--
+-- Name: sfo_classification_pattern pattern_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_classification_pattern ALTER COLUMN pattern_id SET DEFAULT nextval('public.sfo_classification_pattern_pattern_id_seq'::regclass);
+
+
+--
+-- Name: sfo_entity entity_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_entity ALTER COLUMN entity_id SET DEFAULT nextval('public.sfo_entity_entity_id_seq'::regclass);
+
+
+--
+-- Name: sfo_event_dictionary dict_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_event_dictionary ALTER COLUMN dict_id SET DEFAULT nextval('public.sfo_event_dictionary_dict_id_seq'::regclass);
+
+
+--
+-- Name: sfo_fee_line line_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_fee_line ALTER COLUMN line_id SET DEFAULT nextval('public.sfo_fee_line_line_id_seq'::regclass);
+
+
+--
+-- Name: sfo_opportunity opportunity_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_opportunity ALTER COLUMN opportunity_id SET DEFAULT nextval('public.sfo_opportunity_opportunity_id_seq'::regclass);
+
+
+--
+-- Name: sfo_routing_rule rule_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_routing_rule ALTER COLUMN rule_id SET DEFAULT nextval('public.sfo_routing_rule_rule_id_seq'::regclass);
+
+
+--
+-- Name: sfo_team team_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_team ALTER COLUMN team_id SET DEFAULT nextval('public.sfo_team_team_id_seq'::regclass);
+
+
+--
+-- Name: sfo_upload upload_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_upload ALTER COLUMN upload_id SET DEFAULT nextval('public.sfo_upload_upload_id_seq'::regclass);
 
 
 --
@@ -8980,6 +9793,142 @@ ALTER TABLE ONLY public.password_reset_token
 
 
 --
+-- Name: pb_country_config pb_country_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_country_config
+    ADD CONSTRAINT pb_country_config_pkey PRIMARY KEY (country_code);
+
+
+--
+-- Name: pb_mcc_cost pb_mcc_cost_country_code_mcc_scheme_locality_tier_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc_cost
+    ADD CONSTRAINT pb_mcc_cost_country_code_mcc_scheme_locality_tier_key UNIQUE (country_code, mcc, scheme, locality, tier);
+
+
+--
+-- Name: pb_mcc_cost pb_mcc_cost_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc_cost
+    ADD CONSTRAINT pb_mcc_cost_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pb_mcc pb_mcc_country_code_mcc_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc
+    ADD CONSTRAINT pb_mcc_country_code_mcc_key UNIQUE (country_code, mcc);
+
+
+--
+-- Name: pb_mcc pb_mcc_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc
+    ADD CONSTRAINT pb_mcc_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pb_payment_gateway pb_payment_gateway_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_payment_gateway
+    ADD CONSTRAINT pb_payment_gateway_code_key UNIQUE (code);
+
+
+--
+-- Name: pb_payment_gateway pb_payment_gateway_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_payment_gateway
+    ADD CONSTRAINT pb_payment_gateway_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pb_quote pb_quote_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_quote
+    ADD CONSTRAINT pb_quote_pkey PRIMARY KEY (quote_id);
+
+
+--
+-- Name: pb_quote pb_quote_tenant_id_quote_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_quote
+    ADD CONSTRAINT pb_quote_tenant_id_quote_ref_key UNIQUE (tenant_id, quote_ref);
+
+
+--
+-- Name: pb_scheme_fee pb_scheme_fee_country_code_scheme_locality_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_fee
+    ADD CONSTRAINT pb_scheme_fee_country_code_scheme_locality_key UNIQUE (country_code, scheme, locality);
+
+
+--
+-- Name: pb_scheme_fee pb_scheme_fee_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_fee
+    ADD CONSTRAINT pb_scheme_fee_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pb_scheme_row pb_scheme_row_country_code_scheme_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_row
+    ADD CONSTRAINT pb_scheme_row_country_code_scheme_key_key UNIQUE (country_code, scheme_key);
+
+
+--
+-- Name: pb_scheme_row pb_scheme_row_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_row
+    ADD CONSTRAINT pb_scheme_row_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pb_sector_cost pb_sector_cost_country_code_sector_scheme_locality_tier_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_sector_cost
+    ADD CONSTRAINT pb_sector_cost_country_code_sector_scheme_locality_tier_key UNIQUE (country_code, sector, scheme, locality, tier);
+
+
+--
+-- Name: pb_sector_cost pb_sector_cost_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_sector_cost
+    ADD CONSTRAINT pb_sector_cost_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pb_special_rule pb_special_rule_country_code_mcc_scheme_locality_card_type__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_special_rule
+    ADD CONSTRAINT pb_special_rule_country_code_mcc_scheme_locality_card_type__key UNIQUE (country_code, mcc, scheme, locality, card_type, channel, rule_type);
+
+
+--
+-- Name: pb_special_rule pb_special_rule_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_special_rule
+    ADD CONSTRAINT pb_special_rule_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: pdf_batch_log pdf_batch_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9257,6 +10206,126 @@ ALTER TABLE ONLY public.schema_migration_registry
 
 ALTER TABLE ONLY public.scheme_fee_rate
     ADD CONSTRAINT scheme_fee_rate_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sfo_classification_override sfo_classification_override_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_classification_override
+    ADD CONSTRAINT sfo_classification_override_pkey PRIMARY KEY (override_id);
+
+
+--
+-- Name: sfo_classification_override sfo_classification_override_tenant_id_scheme_event_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_classification_override
+    ADD CONSTRAINT sfo_classification_override_tenant_id_scheme_event_code_key UNIQUE (tenant_id, scheme, event_code);
+
+
+--
+-- Name: sfo_classification_pattern sfo_classification_pattern_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_classification_pattern
+    ADD CONSTRAINT sfo_classification_pattern_pkey PRIMARY KEY (pattern_id);
+
+
+--
+-- Name: sfo_classification_pattern sfo_classification_pattern_scheme_match_text_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_classification_pattern
+    ADD CONSTRAINT sfo_classification_pattern_scheme_match_text_key UNIQUE (scheme, match_text);
+
+
+--
+-- Name: sfo_entity sfo_entity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_entity
+    ADD CONSTRAINT sfo_entity_pkey PRIMARY KEY (entity_id);
+
+
+--
+-- Name: sfo_entity sfo_entity_tenant_id_entity_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_entity
+    ADD CONSTRAINT sfo_entity_tenant_id_entity_code_key UNIQUE (tenant_id, entity_code);
+
+
+--
+-- Name: sfo_event_dictionary sfo_event_dictionary_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_event_dictionary
+    ADD CONSTRAINT sfo_event_dictionary_pkey PRIMARY KEY (dict_id);
+
+
+--
+-- Name: sfo_fee_line sfo_fee_line_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_fee_line
+    ADD CONSTRAINT sfo_fee_line_pkey PRIMARY KEY (line_id);
+
+
+--
+-- Name: sfo_fx_rate sfo_fx_rate_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_fx_rate
+    ADD CONSTRAINT sfo_fx_rate_pkey PRIMARY KEY (currency_code);
+
+
+--
+-- Name: sfo_opportunity sfo_opportunity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_opportunity
+    ADD CONSTRAINT sfo_opportunity_pkey PRIMARY KEY (opportunity_id);
+
+
+--
+-- Name: sfo_opportunity sfo_opportunity_tenant_id_fingerprint_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_opportunity
+    ADD CONSTRAINT sfo_opportunity_tenant_id_fingerprint_key UNIQUE (tenant_id, fingerprint);
+
+
+--
+-- Name: sfo_routing_rule sfo_routing_rule_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_routing_rule
+    ADD CONSTRAINT sfo_routing_rule_pkey PRIMARY KEY (rule_id);
+
+
+--
+-- Name: sfo_team sfo_team_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_team
+    ADD CONSTRAINT sfo_team_pkey PRIMARY KEY (team_id);
+
+
+--
+-- Name: sfo_team sfo_team_tenant_id_team_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_team
+    ADD CONSTRAINT sfo_team_tenant_id_team_code_key UNIQUE (tenant_id, team_code);
+
+
+--
+-- Name: sfo_upload sfo_upload_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_upload
+    ADD CONSTRAINT sfo_upload_pkey PRIMARY KEY (upload_id);
 
 
 --
@@ -11382,6 +12451,34 @@ CREATE INDEX idx_password_history_user ON public.password_history USING btree (u
 
 
 --
+-- Name: idx_pb_mcc_cost_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pb_mcc_cost_lookup ON public.pb_mcc_cost USING btree (country_code, mcc);
+
+
+--
+-- Name: idx_pb_mcc_country; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pb_mcc_country ON public.pb_mcc USING btree (country_code, sector);
+
+
+--
+-- Name: idx_pb_quote_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pb_quote_tenant ON public.pb_quote USING btree (tenant_id, created_at DESC);
+
+
+--
+-- Name: idx_pb_special_rule_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pb_special_rule_lookup ON public.pb_special_rule USING btree (country_code, mcc, priority DESC);
+
+
+--
 -- Name: idx_pdf_batch_log_job; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -11638,6 +12735,69 @@ CREATE INDEX idx_sdma_tenant_date_merchant ON ONLY public.sum_daily_merchant_att
 --
 
 CREATE INDEX idx_sdt_fee_rollup ON ONLY public.sum_daily_terminal USING btree (tenant_id, business_date, merchant_id, store_id);
+
+
+--
+-- Name: idx_sfo_line_category; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_line_category ON public.sfo_fee_line USING btree (tenant_id, category);
+
+
+--
+-- Name: idx_sfo_line_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_line_event ON public.sfo_fee_line USING btree (tenant_id, scheme, event_code);
+
+
+--
+-- Name: idx_sfo_line_tenant_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_line_tenant_period ON public.sfo_fee_line USING btree (tenant_id, period_year, period_month);
+
+
+--
+-- Name: idx_sfo_line_upload; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_line_upload ON public.sfo_fee_line USING btree (upload_id);
+
+
+--
+-- Name: idx_sfo_opp_team; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_opp_team ON public.sfo_opportunity USING btree (tenant_id, team_code, status, due_date);
+
+
+--
+-- Name: idx_sfo_opp_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_opp_tenant ON public.sfo_opportunity USING btree (tenant_id, status, detected_at DESC);
+
+
+--
+-- Name: idx_sfo_routing_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_routing_tenant ON public.sfo_routing_rule USING btree (tenant_id, priority DESC);
+
+
+--
+-- Name: idx_sfo_upload_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_upload_period ON public.sfo_upload USING btree (tenant_id, period_year, period_month);
+
+
+--
+-- Name: idx_sfo_upload_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sfo_upload_tenant ON public.sfo_upload USING btree (tenant_id, uploaded_at DESC);
 
 
 --
@@ -12470,14 +13630,14 @@ CREATE INDEX sum_daily_insight_default_tenant_id_business_date_idx ON public.sum
 -- Name: sum_daily_insight_default_tenant_id_business_date_merchant__idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_default_tenant_id_business_date_merchant__idx ON public.sum_daily_insight_default USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_default_tenant_id_business_date_merchant__idx ON public.sum_daily_insight_default USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
 
 
 --
 -- Name: sum_daily_insight_default_tenant_id_business_date_merchant_idx1; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_default_tenant_id_business_date_merchant_idx1 ON public.sum_daily_insight_default USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_default_tenant_id_business_date_merchant_idx1 ON public.sum_daily_insight_default USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
 
 
 --
@@ -12505,14 +13665,14 @@ CREATE INDEX sum_daily_insight_y2024_tenant_id_business_date_idx ON public.sum_d
 -- Name: sum_daily_insight_y2024_tenant_id_business_date_merchant_i_idx1; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2024_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2024 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2024_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2024 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
 
 
 --
 -- Name: sum_daily_insight_y2024_tenant_id_business_date_merchant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2024_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2024 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2024_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2024 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
 
 
 --
@@ -12540,14 +13700,14 @@ CREATE INDEX sum_daily_insight_y2025_tenant_id_business_date_idx ON public.sum_d
 -- Name: sum_daily_insight_y2025_tenant_id_business_date_merchant_i_idx1; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2025_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2025 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2025_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2025 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
 
 
 --
 -- Name: sum_daily_insight_y2025_tenant_id_business_date_merchant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2025_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2025 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2025_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2025 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
 
 
 --
@@ -12575,14 +13735,14 @@ CREATE INDEX sum_daily_insight_y2026_tenant_id_business_date_idx ON public.sum_d
 -- Name: sum_daily_insight_y2026_tenant_id_business_date_merchant_i_idx1; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2026_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2026 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2026_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2026 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
 
 
 --
 -- Name: sum_daily_insight_y2026_tenant_id_business_date_merchant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2026_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2026 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2026_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2026 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
 
 
 --
@@ -12610,14 +13770,14 @@ CREATE INDEX sum_daily_insight_y2027_tenant_id_business_date_idx ON public.sum_d
 -- Name: sum_daily_insight_y2027_tenant_id_business_date_merchant_i_idx1; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2027_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2027 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2027_tenant_id_business_date_merchant_i_idx1 ON public.sum_daily_insight_y2027 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
 
 
 --
 -- Name: sum_daily_insight_y2027_tenant_id_business_date_merchant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX sum_daily_insight_y2027_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2027 USING btree (tenant_id, business_date, merchant_id, store_id) INCLUDE (total_txns, total_volume, total_msf);
+CREATE INDEX sum_daily_insight_y2027_tenant_id_business_date_merchant_id_idx ON public.sum_daily_insight_y2027 USING btree (tenant_id, business_date) INCLUDE (merchant_id, is_opt_in, destination, total_txns, total_volume, total_msf);
 
 
 --
@@ -13255,6 +14415,20 @@ CREATE UNIQUE INDEX uq_sales_country_lead_tenant_email ON public.sales_country_l
 --
 
 CREATE UNIQUE INDEX uq_scheme_fee_rate_key ON public.scheme_fee_rate USING btree (country_code, COALESCE(tenant_id, 0), dest, channel, COALESCE(scheme_group, ''::character varying), COALESCE(card_type, ''::character varying), COALESCE(effective_from, '1900-01-01'::date));
+
+
+--
+-- Name: uq_sfo_dict_global; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_sfo_dict_global ON public.sfo_event_dictionary USING btree (scheme, event_code) WHERE (tenant_id IS NULL);
+
+
+--
+-- Name: uq_sfo_dict_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_sfo_dict_tenant ON public.sfo_event_dictionary USING btree (tenant_id, scheme, event_code) WHERE (tenant_id IS NOT NULL);
 
 
 --
@@ -13989,7 +15163,7 @@ ALTER INDEX public.idx_sum_insight_tenant_date ATTACH PARTITION public.sum_daily
 -- Name: sum_daily_insight_default_tenant_id_business_date_merchant__idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_default_tenant_id_business_date_merchant__idx;
+ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_default_tenant_id_business_date_merchant__idx;
 
 
 --
@@ -14003,7 +15177,7 @@ ALTER INDEX public.sum_daily_insight_tenant_id_business_date_merchant_id_store_k
 -- Name: sum_daily_insight_default_tenant_id_business_date_merchant_idx1; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_default_tenant_id_business_date_merchant_idx1;
+ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_default_tenant_id_business_date_merchant_idx1;
 
 
 --
@@ -14038,14 +15212,14 @@ ALTER INDEX public.idx_sum_insight_tenant_date ATTACH PARTITION public.sum_daily
 -- Name: sum_daily_insight_y2024_tenant_id_business_date_merchant_i_idx1; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2024_tenant_id_business_date_merchant_i_idx1;
+ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2024_tenant_id_business_date_merchant_i_idx1;
 
 
 --
 -- Name: sum_daily_insight_y2024_tenant_id_business_date_merchant_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2024_tenant_id_business_date_merchant_id_idx;
+ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2024_tenant_id_business_date_merchant_id_idx;
 
 
 --
@@ -14087,14 +15261,14 @@ ALTER INDEX public.idx_sum_insight_tenant_date ATTACH PARTITION public.sum_daily
 -- Name: sum_daily_insight_y2025_tenant_id_business_date_merchant_i_idx1; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2025_tenant_id_business_date_merchant_i_idx1;
+ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2025_tenant_id_business_date_merchant_i_idx1;
 
 
 --
 -- Name: sum_daily_insight_y2025_tenant_id_business_date_merchant_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2025_tenant_id_business_date_merchant_id_idx;
+ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2025_tenant_id_business_date_merchant_id_idx;
 
 
 --
@@ -14136,14 +15310,14 @@ ALTER INDEX public.idx_sum_insight_tenant_date ATTACH PARTITION public.sum_daily
 -- Name: sum_daily_insight_y2026_tenant_id_business_date_merchant_i_idx1; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2026_tenant_id_business_date_merchant_i_idx1;
+ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2026_tenant_id_business_date_merchant_i_idx1;
 
 
 --
 -- Name: sum_daily_insight_y2026_tenant_id_business_date_merchant_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2026_tenant_id_business_date_merchant_id_idx;
+ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2026_tenant_id_business_date_merchant_id_idx;
 
 
 --
@@ -14185,14 +15359,14 @@ ALTER INDEX public.idx_sum_insight_tenant_date ATTACH PARTITION public.sum_daily
 -- Name: sum_daily_insight_y2027_tenant_id_business_date_merchant_i_idx1; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2027_tenant_id_business_date_merchant_i_idx1;
+ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2027_tenant_id_business_date_merchant_i_idx1;
 
 
 --
 -- Name: sum_daily_insight_y2027_tenant_id_business_date_merchant_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.idx_sdi_merchant_rollup ATTACH PARTITION public.sum_daily_insight_y2027_tenant_id_business_date_merchant_id_idx;
+ALTER INDEX public.idx_sdi_summary_rollup ATTACH PARTITION public.sum_daily_insight_y2027_tenant_id_business_date_merchant_id_idx;
 
 
 --
@@ -15674,6 +16848,54 @@ ALTER TABLE ONLY public.password_reset_token
 
 
 --
+-- Name: pb_mcc_cost pb_mcc_cost_country_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc_cost
+    ADD CONSTRAINT pb_mcc_cost_country_code_fkey FOREIGN KEY (country_code) REFERENCES public.pb_country_config(country_code);
+
+
+--
+-- Name: pb_mcc pb_mcc_country_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_mcc
+    ADD CONSTRAINT pb_mcc_country_code_fkey FOREIGN KEY (country_code) REFERENCES public.pb_country_config(country_code);
+
+
+--
+-- Name: pb_scheme_fee pb_scheme_fee_country_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_fee
+    ADD CONSTRAINT pb_scheme_fee_country_code_fkey FOREIGN KEY (country_code) REFERENCES public.pb_country_config(country_code);
+
+
+--
+-- Name: pb_scheme_row pb_scheme_row_country_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_scheme_row
+    ADD CONSTRAINT pb_scheme_row_country_code_fkey FOREIGN KEY (country_code) REFERENCES public.pb_country_config(country_code);
+
+
+--
+-- Name: pb_sector_cost pb_sector_cost_country_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_sector_cost
+    ADD CONSTRAINT pb_sector_cost_country_code_fkey FOREIGN KEY (country_code) REFERENCES public.pb_country_config(country_code);
+
+
+--
+-- Name: pb_special_rule pb_special_rule_country_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pb_special_rule
+    ADD CONSTRAINT pb_special_rule_country_code_fkey FOREIGN KEY (country_code) REFERENCES public.pb_country_config(country_code);
+
+
+--
 -- Name: profitability_adjustment_rate profitability_adjustment_rate_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15735,6 +16957,14 @@ ALTER TABLE ONLY public.sales_agent_target
 
 ALTER TABLE ONLY public.sales_user_assignment
     ADD CONSTRAINT sales_user_assignment_team_lead_id_fkey FOREIGN KEY (team_lead_id) REFERENCES public.sales_team_mapping(id);
+
+
+--
+-- Name: sfo_fee_line sfo_fee_line_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sfo_fee_line
+    ADD CONSTRAINT sfo_fee_line_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.sfo_upload(upload_id) ON DELETE CASCADE;
 
 
 --
@@ -16106,6 +17336,12 @@ ALTER TABLE public.merchant_segment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.merchant_settlement_config ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: pb_quote; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pb_quote ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: profitability_adjustment_rate; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -16128,6 +17364,48 @@ ALTER TABLE public.revenue_leakage_flags ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.sales_agent_target ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sfo_classification_override; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sfo_classification_override ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sfo_entity; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sfo_entity ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sfo_fee_line; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sfo_fee_line ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sfo_opportunity; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sfo_opportunity ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sfo_routing_rule; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sfo_routing_rule ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sfo_team; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sfo_team ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sfo_upload; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sfo_upload ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: stg_dcc_revenue_raw; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16466,6 +17744,13 @@ CREATE POLICY tenant_isolation_policy ON public.merchant_settlement_config USING
 
 
 --
+-- Name: pb_quote tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.pb_quote USING ((tenant_id = public.get_current_tenant()));
+
+
+--
 -- Name: ref_tenant_bin_bank tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -16484,6 +17769,55 @@ CREATE POLICY tenant_isolation_policy ON public.revenue_leakage_flags USING ((te
 --
 
 CREATE POLICY tenant_isolation_policy ON public.sales_agent_target USING ((tenant_id = public.get_current_tenant()));
+
+
+--
+-- Name: sfo_classification_override tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.sfo_classification_override USING ((tenant_id = public.get_current_tenant()));
+
+
+--
+-- Name: sfo_entity tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.sfo_entity USING ((tenant_id = public.get_current_tenant()));
+
+
+--
+-- Name: sfo_fee_line tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.sfo_fee_line USING ((tenant_id = public.get_current_tenant()));
+
+
+--
+-- Name: sfo_opportunity tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.sfo_opportunity USING ((tenant_id = public.get_current_tenant()));
+
+
+--
+-- Name: sfo_routing_rule tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.sfo_routing_rule USING ((tenant_id = public.get_current_tenant()));
+
+
+--
+-- Name: sfo_team tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.sfo_team USING ((tenant_id = public.get_current_tenant()));
+
+
+--
+-- Name: sfo_upload tenant_isolation_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation_policy ON public.sfo_upload USING ((tenant_id = public.get_current_tenant()));
 
 
 --
