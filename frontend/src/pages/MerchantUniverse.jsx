@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import Loader from '../components/Loader';
 import { useAuth } from '../contexts/AuthContext';
-import api, { UPLOAD_TIMEOUT, isTimeoutError } from '../api/axios';
+import api, { UPLOAD_TIMEOUT, isTimeoutError, getAccessToken } from '../api/axios';
 
 import MerchantHierarchy from '../components/MerchantHierarchy';
 import TransactionList from '../components/TransactionList';
@@ -84,7 +84,7 @@ const MerchantUniverse = () => {
 
     useEffect(() => {
         const fetchSession = async () => {
-            const token = localStorage.getItem('token');
+            const token = getAccessToken();
             try {
                 // Fetch fresh session data (tenants etc)
                 const response = await fetch('/api/auth/session', {

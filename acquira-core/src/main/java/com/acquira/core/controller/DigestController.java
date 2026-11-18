@@ -106,6 +106,7 @@ public class DigestController {
         return ResponseEntity.ok(cfg);
     }
 
+    @PreAuthorize("@perm.can('ops.daily-digest', 'EDIT')")
     @PutMapping("/config")
     public ResponseEntity<Map<String, Object>> saveConfig(@RequestBody Map<String, Object> body) {
         Long tid = tenantId();
@@ -227,6 +228,7 @@ public class DigestController {
     }
 
     /** Re-deliver the stored copy — to the configured recipients, or to the addresses given. */
+    @PreAuthorize("@perm.can('ops.daily-digest', 'EDIT')")
     @PostMapping("/dispatches/{id}/resend")
     public ResponseEntity<Map<String, Object>> resendCopy(@PathVariable long id,
                                                           @RequestBody(required = false) Map<String, Object> body) {
@@ -245,6 +247,7 @@ public class DigestController {
     }
 
     /** Release every FAILED day back to PENDING so the next sweep retries it (I-10). */
+    @PreAuthorize("@perm.can('ops.daily-digest', 'EDIT')")
     @PostMapping("/retry-failed")
     public ResponseEntity<Map<String, Object>> retryFailed() {
         Long tid = tenantId();
@@ -276,6 +279,7 @@ public class DigestController {
      * already-SENT day returns alreadySent:true unless force=true (explicit
      * resend, which goes out labelled as a restatement).
      */
+    @PreAuthorize("@perm.can('ops.daily-digest', 'EDIT')")
     @PostMapping("/run")
     public ResponseEntity<Map<String, Object>> run(@RequestBody(required = false) Map<String, Object> body) {
         Long tid = tenantId();
@@ -324,6 +328,7 @@ public class DigestController {
         return ResponseEntity.ok(renderer.render(buildFor(tid, d)));
     }
 
+    @PreAuthorize("@perm.can('ops.daily-digest', 'EDIT')")
     @PostMapping("/test-send")
     public ResponseEntity<Map<String, Object>> testSend(@RequestBody(required = false) Map<String, Object> body) {
         Long tid = tenantId();

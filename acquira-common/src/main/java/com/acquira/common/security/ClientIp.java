@@ -4,6 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.regex.Pattern;
+
 /**
  * Resolves the caller's IP for rate limiting, login lockout and audit rows.
  *
@@ -33,12 +35,35 @@ public class ClientIp {
         return resolve(request.getHeader(HEADER), request.getRemoteAddr(), trustedProxies);
     }
 
+    /**
+     * Characters that can legitimately appear in an address hop: IPv4 digits and
+     * dots, IPv6 hex and colons, a zone-id separator ({@code %}), and the
+     * brackets/port some proxies add ({@code [::1]:8080}). Anything else is stripped.
+     */
+    private static final Pattern ILLEGAL = Pattern.compile("[^0-9a-fA-F.:%\\[\\]]");
+
+    /** A bracketed IPv6 with zone and port is under 60 chars; cap well below a log line. */
+    private static final int MAX_LEN = 64;
+
     static String resolve(String forwardedFor, String remoteAddr, int proxies) {
         if (proxies <= 0 || forwardedFor == null || forwardedFor.isBlank()) {
             return remoteAddr;
         }
         String[] hops = forwardedFor.split(",");
         String ip = hops[Math.max(0, hops.length - proxies)].trim();
-        return ip.isEmpty() ? remoteAddr : ip;
+        return ip.isEmpty() ? remoteAddr : sanitize(ip, remoteAddr);
+    }
+
+    /**
+     * The chosen hop is still attacker-influenced text that ends up in audit rows
+     * and WARN lines ([RATE-LIMIT], login lockout). A header value such as
+     * {@code "1.2.3.4\r\n[AUDIT] admin login OK"} would forge a log entry, so
+     * reduce it to the address alphabet, cap its length and, if nothing legal
+     * remains, fall back to the socket address.
+     */
+    private static String sanitize(String hop, String remoteAddr) {
+        String clean = ILLEGAL.matcher(hop).replaceAll("");
+        if (clean.length() > MAX_LEN) clean = clean.substring(0, MAX_LEN);
+        return clean.isEmpty() ? remoteAddr : clean;
     }
 }

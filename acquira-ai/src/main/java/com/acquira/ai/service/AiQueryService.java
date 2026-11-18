@@ -514,6 +514,21 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
                 // enforcement boundary; the Java validation is the early exit.
                 st.execute("SET TRANSACTION READ ONLY");
                 st.execute("SET LOCAL statement_timeout = " + statementTimeoutMs);
+                // Pentest 2026-10-04 (C4): TenantAspect sets app.current_tenant on the
+                // EntityManager's connection, but this callback borrows its OWN pooled
+                // connection — which may carry no tenant, or a stale one from another
+                // tenant's request. RLS is the real isolation boundary for model-written
+                // SQL (the regex validator is advisory), so pin the caller's tenant on
+                // THIS connection, transaction-local, before anything runs.
+                Long tenant = com.acquira.common.config.TenantContext.getCurrentTenant();
+                if (tenant == null) {
+                    throw new java.sql.SQLException("No tenant in context — refusing to run AI query");
+                }
+                try (java.sql.PreparedStatement ps = conn.prepareStatement(
+                        "SELECT set_config('app.current_tenant', ?, true)")) {
+                    ps.setString(1, String.valueOf(tenant));
+                    try (java.sql.ResultSet rs = ps.executeQuery()) { rs.next(); }
+                }
                 List<Map<String, Object>> out = new ArrayList<>();
                 try (java.sql.ResultSet rs = st.executeQuery(wrapped)) {
                     java.sql.ResultSetMetaData md = rs.getMetaData();

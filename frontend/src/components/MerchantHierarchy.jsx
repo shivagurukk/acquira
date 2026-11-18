@@ -3,7 +3,7 @@ import { Search, Filter, Store, CreditCard, ChevronDown, ChevronRight, X, AlertT
 import Loader from '../components/Loader';
 import DateRangePicker from './DateRangePicker';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../api/axios';
+import api, { getAccessToken } from '../api/axios';
 
 const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
     // tenantVersion bumps on every super-admin tenant switch. This tree is
@@ -144,7 +144,7 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
 
     const fetchStoresForMerchant = async (merchantId) => {
         try {
-            const token = localStorage.getItem('token');
+            const token = getAccessToken();
             const tenantId = localStorage.getItem('defaultTenantId');
             const res = await fetch(`/api/merchants/${merchantId}/stores`, {
                 headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
@@ -180,7 +180,7 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
 
     const fetchTerminalsForStore = async (storeId, merchantId) => {
         try {
-            const token = localStorage.getItem('token');
+            const token = getAccessToken();
             const tenantId = localStorage.getItem('defaultTenantId');
             const res = await fetch(`/api/stores/${storeId}/terminals`, {
                 headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }

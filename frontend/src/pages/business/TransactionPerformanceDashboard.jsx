@@ -9,6 +9,7 @@ import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { getAccessToken } from '../../api/axios';
 import { formatMsf, formatCurrency as fmtTenantMoney, formatCompactCurrency } from '../../utils/formatters';
 
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
@@ -58,7 +59,7 @@ const TransactionPerformanceDashboard = () => {
     const [kpiTotals, setKpiTotals] = useState(null);
 
     const fetchApiData = async (groupBy, parentValue, grandParentValue) => {
-        const token = localStorage.getItem('token');
+        const token = getAccessToken();
         const tenantId = localStorage.getItem('defaultTenantId');
         const queryParams = new URLSearchParams({ groupBy, parentValue: parentValue || '', grandParentValue: grandParentValue || '' });
         // Resolve datePreset to real dates before sending

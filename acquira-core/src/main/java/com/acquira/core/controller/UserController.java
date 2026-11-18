@@ -97,7 +97,15 @@ public class UserController {
      */
     private boolean canActOnUser(Long targetUserId) {
         if (isSuperAdmin()) return true;
-        return userIdsInCurrentTenant().contains(targetUserId);
+        if (!userIdsInCurrentTenant().contains(targetUserId)) return false;
+        // Pentest 2026-10-04 (H2): membership of the tenant is not enough. Super
+        // admins hold an access row in every bank they look after, so a Bank Admin
+        // could reset a super admin's password or re-point their email and take
+        // the platform. A caller may never act on an account more privileged than
+        // their own.
+        return userRepository.findById(targetUserId)
+                .map(u -> !com.acquira.common.security.CustomUserDetailsService.isSuperAdmin(u))
+                .orElse(false);
     }
 
     /**
@@ -123,6 +131,17 @@ public class UserController {
         if (role == null || role.isBlank()) return true;
         if (isSuperAdmin()) return true;
         return !"ROLE_SUPER_ADMIN".equals(role.trim());
+    }
+
+    /**
+     * Tenant-row roles are a closed set (pentest 2026-10-04): any free-form string
+     * used to become a GrantedAuthority, so "ROLE_OPS" (or a future role) could be
+     * handed out by anyone, and ROLE_SUPER_ADMIN on a tenant row is meaningless —
+     * super admin is a platform fact on users.role.
+     */
+    private boolean mayAssignTenantRole(String role) {
+        if (role == null || role.isBlank()) return true;
+        return com.acquira.common.security.CustomUserDetailsService.ASSIGNABLE_TENANT_ROLES.contains(role.trim());
     }
 
     /**
@@ -599,7 +618,7 @@ public class UserController {
         // authorities (CustomUserDetailsService), so an unguarded value here lets a
         // bank admin mint ROLE_SUPER_ADMIN for themselves. Only a super admin may
         // assign a super-admin role or the "Super Admin" group.
-        if (!mayAssignRole(roleInTenant) || !mayAssignGroup(group)) {
+        if (!mayAssignTenantRole(roleInTenant) || !mayAssignGroup(group)) {
             return ResponseEntity.status(403)
                     .body(Map.of("error", "You are not allowed to assign this role or group"));
         }
@@ -666,7 +685,7 @@ public class UserController {
 
         // SECURITY: see addTenantAccess — block a non-super-admin from assigning a
         // super-admin role or the "Super Admin" group (privilege escalation).
-        if (!mayAssignRole(roleInTenant) || !mayAssignGroup(group)) {
+        if (!mayAssignTenantRole(roleInTenant) || !mayAssignGroup(group)) {
             return ResponseEntity.status(403)
                     .body(Map.of("error", "You are not allowed to assign this role or group"));
         }

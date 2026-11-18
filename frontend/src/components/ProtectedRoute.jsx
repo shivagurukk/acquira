@@ -15,7 +15,7 @@ import api, { isBackendUnreachable } from '../api/axios';
 // ==========================================
 const ProtectedRoute = ({ children }) => {
     const auth = useAuth();
-    const { token } = auth;
+    const { token, authReady, authRestoreError, restoreSession } = auth;
     const location = useLocation();
     // null = still checking, true = valid, false = rejected (go to login),
     // 'unreachable' = server never answered (session may still be fine).
@@ -34,6 +34,8 @@ const ProtectedRoute = ({ children }) => {
         }, 20000);
 
         const validateSession = async () => {
+            // Token restore from the refresh cookie still in flight — hold.
+            if (!authReady) return;
             if (!token) {
                 setIsValid(false);
                 return;
@@ -52,15 +54,20 @@ const ProtectedRoute = ({ children }) => {
         };
         validateSession();
         return () => { cancelled = true; clearTimeout(watchdog); };
-    }, [token, attempt]);
+    }, [token, authReady, attempt]);
 
-    // No token at all — redirect to login
-    if (!token) {
+    // The cookie-based token restore could not reach the server. Same
+    // treatment as a failed /auth/session below: say so and offer a retry,
+    // which re-runs the restore rather than throwing the session away.
+    const restoreUnreachable = authReady && !token && authRestoreError === 'unreachable';
+
+    // No token at all (and nothing left to wait for) — redirect to login
+    if (authReady && !token && !restoreUnreachable) {
         return <Navigate to="/login" replace state={{ from: location }} />;
     }
 
-    // Still validating session
-    if (isValid === null) {
+    // Still restoring the token / validating session
+    if (!authReady || (isValid === null && !restoreUnreachable)) {
         return (
             <div style={{
                 display: 'flex', justifyContent: 'center', alignItems: 'center',
@@ -75,7 +82,7 @@ const ProtectedRoute = ({ children }) => {
     // Server unreachable — say so and offer a retry. Deliberately NOT a
     // redirect to /login: the session is probably fine and the login screen
     // could not authenticate anyone while the backend is down anyway.
-    if (isValid === 'unreachable') {
+    if (isValid === 'unreachable' || restoreUnreachable) {
         return (
             <div style={{
                 display: 'flex', flexDirection: 'column', gap: 16,
@@ -90,7 +97,11 @@ const ProtectedRoute = ({ children }) => {
                 </div>
                 <div style={{ display: 'flex', gap: 12 }}>
                     <button
-                        onClick={() => { setIsValid(null); setAttempt((n) => n + 1); }}
+                        onClick={() => {
+                            setIsValid(null);
+                            if (restoreUnreachable) restoreSession();
+                            else setAttempt((n) => n + 1);
+                        }}
                         style={{
                             padding: '10px 20px', background: 'var(--primary, #2563eb)', color: '#fff',
                             border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer',

@@ -72,15 +72,68 @@ export const isBackendUnreachable = (err) => {
     return [502, 503, 504].includes(err.response.status);
 };
 
-// Refresh token cache. The primary mechanism is the HttpOnly cookie set
-// by the backend; this localStorage copy is a backward-compat fallback
-// used when the cookie is unavailable (e.g. plain-HTTP dev, where the
-// Secure cookie is not sent). It is therefore NOT XSS-safe — the cookie is.
-let _memRefreshToken = localStorage.getItem('refreshToken') || null;
+// ===== Access token (in memory only) =====
+// H6: the JWT never touches localStorage — a script that can read storage
+// could otherwise lift a bearer token. It lives in this module variable for
+// the lifetime of the page; on a reload, AuthContext restores it by calling
+// POST /auth/refresh, which authenticates with the HttpOnly `refreshToken`
+// cookie (Path=/api/auth) that the server sets. The refresh token itself is
+// never visible to JavaScript at all.
+let _accessToken = null;
+
+export const getAccessToken = () => _accessToken;
+export const setAccessToken = (jwt) => { _accessToken = jwt || null; };
+export const clearAccessToken = () => { _accessToken = null; };
+
+// One-time cleanup: earlier builds persisted both tokens in localStorage.
+// Remove any leftovers so a stale copy cannot linger on a user's machine.
+try {
+    localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
+} catch { /* storage unavailable — nothing to clean */ }
+
+/**
+ * Obtain a fresh access token from the refresh cookie.
+ *
+ * Runs on the raw `axios` (it must not re-enter this instance's interceptor
+ * and recurse). The body is intentionally empty: the server reads the
+ * HttpOnly cookie and rotates it. Resolves with the new JWT, which is also
+ * stored in memory for subsequent requests.
+ */
+export const refreshAccessToken = async () => {
+    const res = await axios.post('/api/auth/refresh', {},
+        { withCredentials: true, timeout: REFRESH_TIMEOUT });
+    const jwt = res.data?.jwt;
+    if (!jwt) throw new Error('Refresh response did not include a jwt');
+    setAccessToken(jwt);
+    return jwt;
+};
+
+/**
+ * Revoke the refresh cookie server-side (POST /auth/logout) — fire-and-forget.
+ *
+ * Raw `axios` so a 401 (cookie already gone) cannot trip this instance's
+ * refresh-and-redirect interceptor in the middle of a logout. Never rejects:
+ * the caller clears local state regardless of what the server says.
+ */
+export const revokeSession = () => {
+    const token = getAccessToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    try {
+        // fetch + keepalive so the call survives the hard redirect to /login
+        // that usually follows it (an aborted XHR would leave the cookie live).
+        return fetch('/api/auth/logout', {
+            method: 'POST', headers, body: '{}', credentials: 'include', keepalive: true,
+        }).catch(() => { /* best effort */ });
+    } catch {
+        return Promise.resolve();
+    }
+};
 
 // Request interceptor — attach JWT and tenant header
 api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token');
+    const token = getAccessToken();
     const tenantId = localStorage.getItem('defaultTenantId');
 
     if (token) {
@@ -125,10 +178,11 @@ api.interceptors.response.use(
 
         // If 401 and not already retrying, attempt refresh
         if (error.response && error.response.status === 401 && !originalRequest._retry) {
-            let refreshToken = localStorage.getItem('refreshToken') || _memRefreshToken;
-
-            // If no refresh token or this IS the refresh request, logout
-            if (!refreshToken || originalRequest.url === '/auth/refresh') {
+            // The refresh token is an HttpOnly cookie, so we cannot tell from
+            // here whether one exists — only the server can. We always try
+            // once; a 401 from /auth/refresh itself is the definitive "no".
+            if (originalRequest.url === '/auth/refresh') {
+                clearAccessToken();
                 clearAuthStorage();
                 showToast('Your session has expired. Please log in again.', 'warning', 5000);
                 setTimeout(() => { window.location.href = '/login'; }, 1200);
@@ -149,17 +203,8 @@ api.interceptors.response.use(
             isRefreshing = true;
 
             try {
-                // #12: Cookie is sent automatically; body is fallback for backward compat
-                const res = await axios.post('/api/auth/refresh', { refreshToken },
-                    { withCredentials: true, timeout: REFRESH_TIMEOUT });
-                const { jwt, refreshToken: newRefresh } = res.data;
-
-                localStorage.setItem('token', jwt);
-                // Fallback copy; HttpOnly cookie remains the primary store.
-                _memRefreshToken = newRefresh;
-                localStorage.setItem('refreshToken', newRefresh);
-
-                api.defaults.headers.common.Authorization = `Bearer ${jwt}`;
+                // Cookie carries the refresh token; the body is empty on purpose.
+                const jwt = await refreshAccessToken();
                 originalRequest.headers.Authorization = `Bearer ${jwt}`;
 
                 processQueue(null, jwt);
@@ -176,6 +221,7 @@ api.interceptors.response.use(
                     showToast('Cannot reach the server. Check your connection and retry.', 'error', 6000);
                     return Promise.reject(refreshError);
                 }
+                clearAccessToken();
                 clearAuthStorage();
                 showToast('Your session has expired. Please log in again.', 'warning', 5000);
                 setTimeout(() => { window.location.href = '/login'; }, 1200);

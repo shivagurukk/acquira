@@ -84,7 +84,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
      */
     private static boolean isAllowedDuringForcedPasswordChange(HttpServletRequest request) {
         String uri = request.getRequestURI();
-        return uri.endsWith("/users/change-password") || uri.contains("/auth/");
+        // Anchored on the API prefix: a loose contains("/auth/") would also match
+        // any other route that happened to carry an "/auth/" segment.
+        return uri.endsWith("/api/users/change-password") || uri.contains("/api/auth/");
     }
 
     @Override
@@ -165,17 +167,20 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                     return;
                 }
 
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authToken);
-
                 // ===== Tenant Context Resolution (with validation) =====
+                // Pentest 2026-10-04 (H1/H7): the SecurityContext used to be set
+                // HERE, before the tenant was known, from the union of the user's
+                // roles across every tenant. It is now set at the end of this
+                // block from the role held in the ACTIVE tenant only, so
+                // hasRole('ADMIN') means "admin of the tenant this request acts
+                // on" and nothing else. Super admin is a platform fact
+                // (users.role) and is the only cross-tenant authority.
+                UserTenantAccess activeAccess = null;
                 try {
                     List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(dbUser);
 
                     // Super Admin can access ANY tenant without explicit UserTenantAccess rows
-                    boolean isSuperAdmin = "ROLE_SUPER_ADMIN".equals(dbUser.getRole());
+                    boolean isSuperAdmin = CustomUserDetailsService.isSuperAdmin(dbUser);
 
                     String tenantIdHeader = request.getHeader("X-Tenant-Id");
                     Long targetTenantId = null;
@@ -212,12 +217,19 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                                 return;
                             }
                         } catch (NumberFormatException e) {
+                            // A malformed header is rejected, not ignored: silently
+                            // falling back to the default tenant would let a client
+                            // believe it is acting on tenant X while writing to Y.
                             logger.warn("Invalid X-Tenant-Id header: " + tenantIdHeader);
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                            response.setContentType("application/json");
+                            response.getWriter().write(
+                                    "{\"error\":\"Invalid tenant header.\",\"code\":\"TENANT_FORBIDDEN\"}");
+                            return;
                         }
                     }
 
                     // Fallback to default tenant or first available
-                    UserTenantAccess activeAccess = null;
                     if (targetTenantId == null) {
                         // 1. Try to find default
                         activeAccess = accessList.stream()
@@ -245,44 +257,40 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                     if (targetTenantId != null) {
                         TenantContext.setCurrentTenant(targetTenantId);
 
-                        // NEW: Set Scope and Role
-                        if (activeAccess != null) {
-                            // 1. Set Effective Role
-                            String role = activeAccess.getRoleInTenant();
-                            // Fallback to Group Name if role is null (compatibility)
-                            if (role == null && activeAccess.getSysUserGroup() != null) {
-                                String group = activeAccess.getSysUserGroup().getGroupName();
-                                if ("Super Admin".equalsIgnoreCase(group))
-                                    role = "ROLE_SUPER_ADMIN";
-                                else if ("Bank Admin".equalsIgnoreCase(group))
-                                    role = "ROLE_ADMIN";
-                                else
-                                    role = "ROLE_USER";
-                            }
-                            if (role != null)
-                                TenantContext.setCurrentRole(role);
+                        // Effective role in the active tenant (informational; the
+                        // authoritative copy is the SecurityContext built below).
+                        String role = isSuperAdmin ? "ROLE_SUPER_ADMIN"
+                                : CustomUserDetailsService.effectiveTenantRole(activeAccess);
+                        if (role != null) TenantContext.setCurrentRole(role);
 
-                            // 2. Set Visible Tenants (for now, just the active one, or ALL if Super Admin)
-                            if ("ROLE_SUPER_ADMIN".equals(role)) {
-                                // P2-4 fix: super admin sees all tenants for cross-tenant
-                                // rollups (executive dashboards, group reports). Without
-                                // this, getVisibleTenants() returned only the currently
-                                // active tenant for SA users — silently scoping every
-                                // multi-tenant query to one tenant.
-                                // Cached (60s TTL) to avoid a tenantRepository.findAll()
-                                // on every super-admin request — see getAllTenantIdsCached().
-                                java.util.List<Long> allTenantIds = getAllTenantIdsCached();
-                                if (allTenantIds != null) {
-                                    TenantContext.setVisibleTenants(allTenantIds);
-                                }
-                                // else: load failed — fall back to current-tenant-only
-                                // scope; safer than accidentally widening visibility.
+                        // Visible tenants: just the active one, or ALL for a
+                        // platform super admin (users.role) — NOT for a user whose
+                        // tenant row happens to say super admin.
+                        if (isSuperAdmin) {
+                            // P2-4 fix: super admin sees all tenants for cross-tenant
+                            // rollups (executive dashboards, group reports). Without
+                            // this, getVisibleTenants() returned only the currently
+                            // active tenant for SA users — silently scoping every
+                            // multi-tenant query to one tenant.
+                            // Cached (60s TTL) to avoid a tenantRepository.findAll()
+                            // on every super-admin request — see getAllTenantIdsCached().
+                            java.util.List<Long> allTenantIds = getAllTenantIdsCached();
+                            if (allTenantIds != null) {
+                                TenantContext.setVisibleTenants(allTenantIds);
                             }
+                            // else: load failed — fall back to current-tenant-only
+                            // scope; safer than accidentally widening visibility.
                         }
                     }
                 } catch (Exception e) {
                     logger.warn("Could not set tenant context for " + username + ": " + e.getMessage());
                 }
+
+                // Authorities = platform roles + the role in the ACTIVE tenant only.
+                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                        userDetails, null, CustomUserDetailsService.tenantAuthorities(dbUser, activeAccess));
+                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(authToken);
             }
         }
 

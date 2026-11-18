@@ -5,12 +5,14 @@ import com.acquira.common.model.ReportTemplate;
 import com.acquira.common.model.ReportSchedule;
 import com.acquira.common.repository.ReportTemplateRepository;
 import com.acquira.common.repository.ReportScheduleRepository;
+import com.acquira.common.repository.UserRepository;
 import com.acquira.core.service.ReportExportService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -27,6 +29,19 @@ public class ReportBuilderController {
     private final ReportScheduleRepository scheduleRepo;
     private final ReportExportService exportService;
     private final JdbcTemplate jdbcTemplate;
+    private final UserRepository userRepo;
+
+    /**
+     * Owner of a new template is whoever holds the JWT, never a userId from the
+     * request body — the body value let any caller file templates under another
+     * user's id (attribution spoofing).
+     */
+    private Long currentUserId() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        return userRepo.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"))
+                .getId();
+    }
 
     // ═══════════════════════════════════════════════════════════
     //  TEMPLATES
@@ -38,12 +53,13 @@ public class ReportBuilderController {
         return ResponseEntity.ok(templateRepo.findByTenantIdOrderByNameAsc(tenantId));
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @PostMapping("/templates")
     public ResponseEntity<?> createTemplate(@RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
         ReportTemplate t = new ReportTemplate();
         t.setTenantId(tenantId);
-        t.setUserId(Long.valueOf(body.getOrDefault("userId", 0).toString()));
+        t.setUserId(currentUserId()); // body "userId" is ignored on purpose
         t.setName((String) body.get("name"));
         t.setDescription((String) body.get("description"));
         t.setConfigJson((String) body.get("configJson"));
@@ -52,6 +68,7 @@ public class ReportBuilderController {
         return ResponseEntity.ok(templateRepo.save(t));
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @PutMapping("/templates/{id}")
     public ResponseEntity<?> updateTemplate(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -68,6 +85,7 @@ public class ReportBuilderController {
             .orElse(ResponseEntity.notFound().build());
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @DeleteMapping("/templates/{id}")
     public ResponseEntity<?> deleteTemplate(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -119,6 +137,7 @@ public class ReportBuilderController {
         return ResponseEntity.ok(scheduleRepo.findByTenantIdOrderByCreatedAtDesc(tenantId));
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @PostMapping("/templates/{templateId}/schedule")
     public ResponseEntity<?> createSchedule(@PathVariable Long templateId, @RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -145,6 +164,7 @@ public class ReportBuilderController {
         return ResponseEntity.ok(scheduleRepo.save(s));
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @DeleteMapping("/schedules/{id}")
     public ResponseEntity<?> deleteSchedule(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();

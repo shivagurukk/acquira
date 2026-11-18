@@ -351,15 +351,21 @@ const TemplatesTab = () => {
         {previewOpen && (
           <div className="ui-stack ui-stack--sm">
             <Alert tone="info" title="Subject">{previewOpen.subject}</Alert>
-            <div
+            {/* M10: the body is server-rendered HTML from a user-editable
+                template. An empty sandbox (no scripts, no same-origin) keeps
+                it from touching this document, its storage or its session. */}
+            <iframe
+              title="Email preview"
+              sandbox=""
+              srcDoc={previewOpen.body}
               style={{
+                display: 'block',
+                width: '100%',
+                height: 480,
                 border: '1px solid var(--border)',
                 borderRadius: 'var(--radius-md)',
-                overflow: 'auto',
-                maxHeight: 480,
                 background: 'var(--bg-card)',
               }}
-              dangerouslySetInnerHTML={{ __html: previewOpen.body }}
             />
           </div>
         )}

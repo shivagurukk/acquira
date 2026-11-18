@@ -741,9 +741,15 @@ public class FinanceController {
         return decimals >= 0 ? CurrencyMeta.formatAmount(v, decimals) : v.stripTrailingZeros().toPlainString();
     }
 
-    /** RFC-4180 quoting — a merchant name containing a quote or comma used to corrupt the row. */
+    /**
+     * RFC-4180 quoting — a merchant name containing a quote or comma used to corrupt the row.
+     * Also neutralises a leading =+-@ (and tab/CR) so a merchant name like "=HYPERLINK(...)"
+     * is not executed as a formula when the CSV is opened in Excel; same technique as
+     * AnalyticsController.csvCell so every exporter behaves identically.
+     */
     private static String csvQuote(String s) {
         if (s == null) return "";
+        if (!s.isEmpty() && "=+-@\t\r".indexOf(s.charAt(0)) >= 0) s = "'" + s;
         return "\"" + s.replace("\"", "\"\"") + "\"";
     }
 

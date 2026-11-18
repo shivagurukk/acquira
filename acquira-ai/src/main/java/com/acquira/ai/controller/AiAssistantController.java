@@ -22,6 +22,9 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/ai")
+// Pentest 2026-10-04 (C4): the assistant runs model-generated SQL; gate it on the
+// AI Assistant screen grant instead of bare authentication.
+@org.springframework.security.access.prepost.PreAuthorize("@menuAccess.canAccess('/ai-assistant')")
 public class AiAssistantController {
 
     private final AiQueryService aiQueryService;

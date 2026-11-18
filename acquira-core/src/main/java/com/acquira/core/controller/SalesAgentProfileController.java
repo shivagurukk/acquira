@@ -42,6 +42,7 @@ public class SalesAgentProfileController {
         }
     }
 
+    @PreAuthorize("@perm.can('sales.agents', 'EDIT')")
     @PutMapping("/{salesUserId}")
     public ResponseEntity<?> updateAgent(@PathVariable String salesUserId,
             @RequestBody Map<String, Object> payload) {
@@ -53,6 +54,7 @@ public class SalesAgentProfileController {
     }
 
     /** Create/refresh agent profile stubs from merchant data (auto-populates email). */
+    @PreAuthorize("@perm.can('sales.agents', 'EDIT')")
     @PostMapping("/sync")
     public ResponseEntity<Map<String, Object>> sync() {
         return ResponseEntity.ok(salesAgentProfileService.syncFromMerchants(getTenantId()));

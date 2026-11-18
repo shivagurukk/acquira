@@ -69,6 +69,7 @@ public class S3FileController {
     }
 
     /** ── UPLOAD one or more files into a folder under the configured prefix ── */
+    @PreAuthorize("@perm.can('admin.s3-settings', 'EDIT')")
     @PostMapping("/upload")
     public ResponseEntity<Map<String, Object>> upload(
             @RequestParam("files") MultipartFile[] files,
@@ -117,6 +118,7 @@ public class S3FileController {
     }
 
     /** ── CREATE a folder (body: { path, name }) ── */
+    @PreAuthorize("@perm.can('admin.s3-settings', 'EDIT')")
     @PostMapping("/folder")
     public ResponseEntity<Map<String, Object>> createFolder(@RequestBody Map<String, Object> body) {
         try {
@@ -140,6 +142,7 @@ public class S3FileController {
      * A key ending in '/' is a folder, which is copy-every-object-then-delete —
      * see S3FileService#renameFolder for why that is capped and non-atomic.
      */
+    @PreAuthorize("@perm.can('admin.s3-settings', 'EDIT')")
     @PostMapping("/rename")
     public ResponseEntity<Map<String, Object>> rename(@RequestBody Map<String, Object> body) {
         String key     = str(body, "key");
@@ -164,12 +167,14 @@ public class S3FileController {
     }
 
     /** ── DELETE one object ── */
+    @PreAuthorize("@perm.can('admin.s3-settings', 'EDIT')")
     @DeleteMapping
     public ResponseEntity<Map<String, Object>> deleteOne(@RequestParam String key) {
         return runDelete(List.of(key));
     }
 
     /** ── DELETE many objects (body: { keys: [...] }) ── */
+    @PreAuthorize("@perm.can('admin.s3-settings', 'EDIT')")
     @PostMapping("/delete")
     public ResponseEntity<Map<String, Object>> deleteMany(@RequestBody Map<String, Object> body) {
         Object raw = body.get("keys");

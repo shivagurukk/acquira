@@ -8,6 +8,7 @@ import com.acquira.common.repository.MerchantOpportunityScoreRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -158,6 +159,8 @@ public class BusinessController {
         }
 
         // 1. Dashboard KPIs (Simplistic aggregation for now)
+        // Tenant-wide figures: same screen grant as the Business Dashboard that owns them (M4).
+        @PreAuthorize("@menuAccess.canAccess('/business/dashboard')")
         @GetMapping("/dashboard/kpis")
         public ResponseEntity<Map<String, Object>> getDashboardKpis(
                         @RequestParam(required = false) LocalDate endDate) {
@@ -242,6 +245,8 @@ public class BusinessController {
          * fake-zero weeks. Net margin is the corrected
          * msf − interchange − scheme_fee figure.
          */
+        // Called only by the Executive Dashboard (frontend /dashboard) — gate on its grant (M4).
+        @PreAuthorize("@menuAccess.canAccess('/dashboard')")
         @ReportResponse
         @GetMapping("/ceo-summary")
         public ResponseEntity<Map<String, Object>> getCeoSummary(
@@ -1319,6 +1324,8 @@ public class BusinessController {
          *    applied to the zero-sales universe — a merchant with zero rows has
          *    no card dimensions to filter on.
          */
+        // Called only by BusinessDashboard.jsx (/business/dashboard) — gate on its grant (M4).
+        @PreAuthorize("@menuAccess.canAccess('/business/dashboard')")
         @PostMapping("/dashboard/kpis-filtered")
         public ResponseEntity<Map<String, Object>> getDashboardKpisFiltered(
                         @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
@@ -1608,7 +1615,8 @@ public class BusinessController {
                 return Long.parseLong(o.toString());
         }
 
-        // 4. Opportunities
+        // 4. Opportunities — backs the Opportunity Intelligence screen only (M4).
+        @PreAuthorize("@menuAccess.canAccess('/business/opportunity')")
         @GetMapping("/opportunity")
         public ResponseEntity<List<MerchantOpportunityScore>> getOpportunities() {
                 Long tenantId = resolveTenant();

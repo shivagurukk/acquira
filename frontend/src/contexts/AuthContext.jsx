@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
-import api from '../api/axios';
+import api, {
+    getAccessToken, setAccessToken, clearAccessToken, refreshAccessToken, revokeSession,
+    isBackendUnreachable,
+} from '../api/axios';
 import { invalidateApiCache } from '../api/apiCache';
 import { clearAuthStorage } from '../utils/authStorage';
 import { setDefaultCurrency, setDefaultLocale, resolveDecimals } from '../utils/formatters';
@@ -18,8 +21,11 @@ const AuthContext = createContext(null);
 // ==========================================
 export const AuthProvider = ({ children }) => {
     const [auth, setAuth] = useState(() => {
-        const token = localStorage.getItem('token');
-        const refreshToken = localStorage.getItem('refreshToken');
+        // H6: the access token is NOT persisted. It lives in memory in
+        // api/axios.js; after a reload it is null until restoreSession()
+        // below re-mints one from the HttpOnly refresh cookie. Only
+        // non-secret profile data is read back from localStorage here.
+        const token = getAccessToken();
         const username = localStorage.getItem('username') || '';
         const userRole = localStorage.getItem('userRole') || 'ROLE_USER';
         const activeTenantId = localStorage.getItem('defaultTenantId') || null;
@@ -35,9 +41,16 @@ export const AuthProvider = ({ children }) => {
         try { permissions = JSON.parse(localStorage.getItem('permissions') || '[]'); } catch (e) { /* ignore */ }
 
         return {
-            token, refreshToken, username, userRole, roles, tenants, activeTenantId, menus, permissions,
+            token, username, userRole, roles, tenants, activeTenantId, menus, permissions,
             sessionTimeoutMinutes,
             isAuthenticated: !!token,
+            // True once we know whether a session exists. False only while a
+            // stored profile is waiting on the cookie-based token restore, so
+            // ProtectedRoute can hold instead of bouncing to /login early.
+            authReady: !!token || !username,
+            // 'unreachable' when the restore could not reach the server (as
+            // opposed to being rejected) — the session may still be good.
+            authRestoreError: null,
             // Restored from storage so a page refresh cannot clear the
             // force-change-password redirect (it previously lived only in
             // React state, so F5 silently bypassed it).
@@ -46,10 +59,51 @@ export const AuthProvider = ({ children }) => {
         };
     });
 
+    // ===== Session restore after a reload =====
+    // Profile data survives in localStorage but the access token does not.
+    // Ask the server for a new one; the HttpOnly refresh cookie authenticates
+    // the call. A 401 means the cookie is gone/revoked -> genuinely logged out.
+    // A network failure means we simply don't know -> keep the profile and let
+    // ProtectedRoute offer a retry rather than destroying a good session.
+    const restoreSession = useCallback(async () => {
+        setAuth(prev => ({ ...prev, authReady: false, authRestoreError: null }));
+        try {
+            const jwt = await refreshAccessToken();
+            setAuth(prev => ({ ...prev, token: jwt, isAuthenticated: true, authReady: true, authRestoreError: null }));
+            return true;
+        } catch (err) {
+            if (isBackendUnreachable(err)) {
+                setAuth(prev => ({ ...prev, token: null, isAuthenticated: false, authReady: true, authRestoreError: 'unreachable' }));
+                return false;
+            }
+            clearAccessToken();
+            clearAuthStorage();
+            setAuth({
+                token: null, username: '', userRole: '', roles: [],
+                tenants: [], activeTenantId: null, menus: [], permissions: [],
+                isAuthenticated: false, authReady: true, authRestoreError: null,
+                mustChangePassword: false, tenantVersion: 0,
+            });
+            return false;
+        }
+    }, []);
+
+    // Guard against StrictMode's double effect run: two concurrent refreshes
+    // would race on the rotating cookie and the loser could revoke the winner.
+    const restoreStarted = React.useRef(false);
     useEffect(() => {
-        if (auth.token) {
-            localStorage.setItem('token', auth.token);
-            localStorage.setItem('refreshToken', auth.refreshToken || '');
+        if (restoreStarted.current) return;
+        if (!auth.authReady && !auth.token && auth.username) {
+            restoreStarted.current = true;
+            restoreSession();
+        }
+        // Mount-only: later transitions go through login()/logout()/retry.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        if (auth.isAuthenticated) {
+            // Never the token — see H6 note above.
             localStorage.setItem('username', auth.username || '');
             localStorage.setItem('userRole', auth.userRole || '');
             localStorage.setItem('defaultTenantId', auth.activeTenantId || '');
@@ -63,9 +117,11 @@ export const AuthProvider = ({ children }) => {
     }, [auth]);
 
     const login = useCallback((data) => {
+        // The refresh token arrives only as an HttpOnly cookie set by the
+        // server; any `refreshToken` field in the body is ignored.
+        setAccessToken(data.jwt);
         const newAuth = {
             token: data.jwt,
-            refreshToken: data.refreshToken,
             username: data.username || '',
             userRole: data.userRole || 'ROLE_USER',
             roles: data.roles || [],
@@ -75,6 +131,8 @@ export const AuthProvider = ({ children }) => {
             permissions: data.permissions || [],
             sessionTimeoutMinutes: Number(data.sessionTimeoutMinutes) || 30,
             isAuthenticated: true,
+            authReady: true,
+            authRestoreError: null,
             mustChangePassword: data.mustChangePassword || false,
             tenantVersion: 0,
         };
@@ -138,11 +196,16 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const logout = useCallback(() => {
+        // Revoke the refresh cookie server-side first (fire-and-forget — it
+        // never rejects), then drop everything local.
+        revokeSession();
+        clearAccessToken();
         invalidateApiCache();
         clearAuthStorage();
         setAuth({
-            token: null, refreshToken: null, username: '', userRole: '', roles: [],
+            token: null, username: '', userRole: '', roles: [],
             tenants: [], activeTenantId: null, menus: [], permissions: [], isAuthenticated: false,
+            authReady: true, authRestoreError: null, mustChangePassword: false,
             tenantVersion: 0,
         });
     }, []);
@@ -171,6 +234,10 @@ export const AuthProvider = ({ children }) => {
             if (Date.now() - lastActivity >= timeoutMs) {
                 clearInterval(intervalId);
                 events.forEach(e => window.removeEventListener(e, markActivity));
+                // Revoke the refresh cookie too — otherwise a reload would
+                // silently mint a new access token and defeat the timeout.
+                revokeSession();
+                clearAccessToken();
                 clearAuthStorage();
                 // Hard redirect so all in-flight requests/state are dropped.
                 window.location.href = '/login?expired=1';
@@ -276,7 +343,7 @@ export const AuthProvider = ({ children }) => {
 
     const value = {
         ...auth,
-        login, switchTenant, logout, clearMustChangePassword,
+        login, switchTenant, logout, clearMustChangePassword, restoreSession,
         isSuperAdmin, isAdmin, activeTenant,
         can, canPath,
         // #16: Currency

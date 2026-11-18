@@ -210,7 +210,7 @@ public class AnalyticsExplorerController {
     }
 
     @PostMapping("/master-items")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN') and @perm.can('explorer', 'EDIT')")
     public ResponseEntity<?> createMasterItem(@RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
@@ -262,7 +262,7 @@ public class AnalyticsExplorerController {
     }
 
     @DeleteMapping("/master-items/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN') and @perm.can('explorer', 'EDIT')")
     public ResponseEntity<?> deleteMasterItem(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
@@ -283,6 +283,7 @@ public class AnalyticsExplorerController {
         return ResponseEntity.ok(alertRepo.findByTenantIdOrderByCreatedAtDesc(tenantId));
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @PostMapping("/alerts")
     public ResponseEntity<?> createAlert(@RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -305,6 +306,7 @@ public class AnalyticsExplorerController {
         return ResponseEntity.ok(alertRepo.save(a));
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @PutMapping("/alerts/{id}")
     public ResponseEntity<?> updateAlert(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -324,6 +326,7 @@ public class AnalyticsExplorerController {
             .orElse(ResponseEntity.notFound().build());
     }
 
+    @PreAuthorize("@perm.can('explorer', 'EDIT')")
     @DeleteMapping("/alerts/{id}")
     public ResponseEntity<?> deleteAlert(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();

@@ -164,6 +164,31 @@ public class AccessRequestController {
             }
         }
 
+        // SECURITY (pentest 2026-10-04, C3): roleInTenant and groupId come from the
+        // admin's request body. UserController guards the same two fields
+        // (mayAssignRole / mayAssignGroup); this path never did, so a bank admin
+        // could approve a throwaway request with roleInTenant=ROLE_SUPER_ADMIN or
+        // the "Super Admin" group and mint a platform super admin. A tenant row
+        // can only ever carry a tenant role, and only a super admin may hand out
+        // the super-admin group.
+        if (roleInTenant != null && !roleInTenant.isBlank()) {
+            roleInTenant = roleInTenant.trim();
+            if (!com.acquira.common.security.CustomUserDetailsService.ASSIGNABLE_TENANT_ROLES.contains(roleInTenant)) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "roleInTenant must be one of "
+                           + com.acquira.common.security.CustomUserDetailsService.ASSIGNABLE_TENANT_ROLES));
+            }
+        } else {
+            roleInTenant = null;
+        }
+        SysUserGroup group = groupRepository.findById(groupId)
+            .orElseThrow(() -> new RuntimeException("Group not found"));
+        if (!isSuperAdmin() && group.getGroupName() != null
+                && "Super Admin".equalsIgnoreCase(group.getGroupName().trim())) {
+            return ResponseEntity.status(403).body(Map.of(
+                "error", "Only a super admin may assign the Super Admin group"));
+        }
+
         // Create user
         String email = request.getEmail() != null ? request.getEmail().trim() : "";
         if (email.isEmpty()) {
@@ -194,8 +219,13 @@ public class AccessRequestController {
         user.setUsername(username);
         user.setEmail(email);
         user.setDisplayName(request.getDisplayName());
-        user.setSsoProvider(request.getSsoProvider());
-        user.setSsoId(request.getSsoId());
+        // The request row's ssoProvider/ssoId were typed by an anonymous caller of
+        // /api/sso/request-access and were never proven at an IdP. Leave the new
+        // account unlinked; the first genuine SSO callback links it (SsoController
+        // binds the IdP's immutable object id at that point). Carrying the claimed
+        // id over would let the requester pre-bind someone else's identity.
+        user.setSsoProvider(null);
+        user.setSsoId(null);
         user.setApprovalStatus("APPROVED");
         user.setRole("ROLE_USER");
         user.setActive(true);
@@ -207,8 +237,6 @@ public class AccessRequestController {
         // Assign tenant + group
         Tenant tenant = tenantRepository.findById(tenantId)
             .orElseThrow(() -> new RuntimeException("Tenant not found"));
-        SysUserGroup group = groupRepository.findById(groupId)
-            .orElseThrow(() -> new RuntimeException("Group not found"));
 
         UserTenantAccess access = new UserTenantAccess();
         access.setUser(savedUser);

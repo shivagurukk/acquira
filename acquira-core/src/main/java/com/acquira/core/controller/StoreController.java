@@ -12,6 +12,9 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/stores")
+// M4: only the Merchant Universe hierarchy (frontend /merchants) expands a
+// store's terminals, so this API carries that screen's VIEW grant.
+@org.springframework.security.access.prepost.PreAuthorize("@menuAccess.canAccess('/merchants')")
 public class StoreController {
 
     @Autowired

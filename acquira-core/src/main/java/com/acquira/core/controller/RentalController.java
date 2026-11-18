@@ -323,9 +323,15 @@ public class RentalController {
                 .body(body);
     }
 
+    /**
+     * RFC-4180 quoting plus formula-injection guard: a leading =+-@ (or tab/CR) in a
+     * merchant/store name is prefixed with a single quote so Excel treats it as text
+     * instead of evaluating it. Same technique as AnalyticsController.csvCell.
+     */
     private static String csvCell(Object v) {
         if (v == null) return "";
         String s = String.valueOf(v);
+        if (!s.isEmpty() && "=+-@\t\r".indexOf(s.charAt(0)) >= 0) s = "'" + s;
         if (s.contains(",") || s.contains("\"") || s.contains("\n")) {
             return "\"" + s.replace("\"", "\"\"") + "\"";
         }

@@ -19,4 +19,14 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
     @Modifying
     @Query("DELETE FROM PasswordResetToken t WHERE t.user.id = :userId")
     void deleteByUserId(Long userId);
+
+    /**
+     * Atomically spend one guess. Returns 1 if a slot was taken, 0 if the budget
+     * was already exhausted. A read-check-save in Java let N concurrent requests
+     * all see attemptCount &lt; max before any of them wrote (pentest 2026-10-04, H4).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE PasswordResetToken t SET t.attemptCount = t.attemptCount + 1 "
+         + "WHERE t.id = :id AND t.used = false AND t.attemptCount < :max")
+    int tryConsumeAttempt(Long id, int max);
 }

@@ -25,6 +25,12 @@ import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/merchants")
+// M4: the merchant universe is tenant-wide data. Callers are the MERCHANT MGT
+// screens (/merchants hierarchy, /merchant/universe 360 + assignment history)
+// and two BUSINESS screens (/business/comparison -> hierarchy + compare,
+// /business/report-manager -> list), so any VIEW grant in either category passes.
+@org.springframework.security.access.prepost.PreAuthorize(
+        "@menuAccess.canAccessCategory('MERCHANT MGT') or @menuAccess.canAccessCategory('BUSINESS')")
 public class MerchantController {
 
     private final MerchantRepository merchantRepository;

@@ -31,6 +31,7 @@ public class SalesTeamController {
         return ResponseEntity.ok(salesTeamService.getTeamLeads(getTenantId()));
     }
 
+    @PreAuthorize("@perm.can('sales.team-management', 'EDIT')")
     @PostMapping("/team-leads")
     public ResponseEntity<SalesTeamMapping> createTeamLead(@RequestBody Map<String, Object> payload) {
         String name = (String) payload.get("name");
@@ -39,6 +40,7 @@ public class SalesTeamController {
         return ResponseEntity.ok(salesTeamService.createTeamLead(getTenantId(), name, email, isDefault));
     }
 
+    @PreAuthorize("@perm.can('sales.team-management', 'EDIT')")
     @PutMapping("/team-leads/{id}")
     public ResponseEntity<SalesTeamMapping> updateTeamLead(@PathVariable Long id,
             @RequestBody Map<String, Object> payload) {
@@ -48,6 +50,7 @@ public class SalesTeamController {
         return ResponseEntity.ok(salesTeamService.updateTeamLead(getTenantId(), id, name, email, isDefault));
     }
 
+    @PreAuthorize("@perm.can('sales.team-management', 'EDIT')")
     @DeleteMapping("/team-leads/{id}")
     public ResponseEntity<Void> deleteTeamLead(@PathVariable Long id) {
         salesTeamService.deleteTeamLead(getTenantId(), id);
@@ -59,6 +62,7 @@ public class SalesTeamController {
         return ResponseEntity.ok(salesTeamService.getSalesUsersWithStatus(getTenantId()));
     }
 
+    @PreAuthorize("@perm.can('sales.team-management', 'EDIT')")
     @PostMapping("/assign")
     public ResponseEntity<?> assignSalesUser(@RequestBody Map<String, Object> payload) {
         String salesUserId = (String) payload.get("salesUserId");
@@ -81,6 +85,7 @@ public class SalesTeamController {
         }
     }
 
+    @PreAuthorize("@perm.can('sales.team-management', 'EDIT')")
     @PostMapping("/auto-assign")
     public ResponseEntity<Void> autoAssign() {
         salesTeamService.autoAssignUnmapped(getTenantId());

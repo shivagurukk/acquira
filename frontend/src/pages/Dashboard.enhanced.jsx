@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../api/axios';
+import api, { getAccessToken } from '../api/axios';
 import {
     Activity, DollarSign, AlertTriangle, Store, Target,
     RefreshCw, BarChart3, ArrowRight, Clock, Percent, TrendingUp, Layers, Crown
@@ -217,7 +217,7 @@ const Dashboard = () => {
     const fetchAllData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
+            const token = getAccessToken();
             const tenantId = localStorage.getItem('defaultTenantId');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId };
             const end = latestDataDate ? new Date(latestDataDate) : new Date();

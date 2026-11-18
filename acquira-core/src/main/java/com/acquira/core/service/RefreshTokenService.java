@@ -75,6 +75,19 @@ public class RefreshTokenService {
         }
     }
 
+    /** Revoke ONE refresh token (single-device logout). Returns true if a live row was revoked. */
+    public boolean revokeToken(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) return false;
+        try {
+            return jdbc.update(
+                "UPDATE refresh_token SET revoked = TRUE WHERE token_hash = ? AND revoked = FALSE",
+                hashToken(rawToken)) > 0;
+        } catch (Exception e) {
+            log.warn("Failed to revoke refresh token: {}", e.getMessage());
+            return false;
+        }
+    }
+
     /** Revoke all refresh tokens for a user (logout all devices) */
     public int revokeAllForUser(String username) {
         try {

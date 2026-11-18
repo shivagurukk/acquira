@@ -43,6 +43,11 @@ services:
       SPRING_SQL_INIT_MODE: ${SQL_INIT_MODE:-never}
       JWT_SECRET_KEY: "local-dev-only-change-me-32bytes-min"
       APP_ENCRYPTION_KEY: "local-dev-only-32-byte-aes-key!!"   # MUST stay stable
+      # Both default OFF in application.properties (safe base for any pod that
+      # starts without a profile). The local stack opts back in: Swagger UI for
+      # exploring the API, private/http webhook targets for a local receiver.
+      API_DOCS_ENABLED: "true"
+      WEBHOOKS_ALLOW_PRIVATE_URLS: "true"
     ports:
       - "8081:8081"
     volumes:

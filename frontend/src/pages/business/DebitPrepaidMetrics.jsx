@@ -14,6 +14,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { getAccessToken } from '../../api/axios';
 import { formatMsf, formatCurrency as fmtMoney, formatCompactCurrency } from '../../utils/formatters';
 import { useDataBounds } from '../../hooks/useDataBounds';
 import DataBoundsBanner from '../../components/DataBoundsBanner';
@@ -288,7 +289,7 @@ const DebitPrepaidMetrics = () => {
     };
 
     const authHeaders = () => {
-        const token = localStorage.getItem('token');
+        const token = getAccessToken();
         const tenantId = localStorage.getItem('defaultTenantId');
         return {
             'Content-Type': 'application/json',

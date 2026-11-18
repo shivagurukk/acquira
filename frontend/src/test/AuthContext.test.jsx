@@ -4,25 +4,37 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { clearAccessToken } from '../api/axios';
 
 // Mock axios.
 // get() must return a Promise: AuthContext fetches /users/me/locale on login
 // and chains .then() on it. With a bare vi.fn() (returning undefined) that
 // effect threw and failed every test that logs in — a pre-existing harness bug.
-vi.mock('../api/axios', () => ({
-  default: {
-    post: vi.fn(() => Promise.resolve({ data: {} })),
-    get: vi.fn(() => Promise.resolve({ data: {} })),
-    interceptors: {
-      request: { use: vi.fn() },
-      response: { use: vi.fn() },
+vi.mock('../api/axios', () => {
+  // H6: the access token lives in memory inside api/axios.js; mirror that here.
+  let accessToken = null;
+  return {
+    default: {
+      post: vi.fn(() => Promise.resolve({ data: {} })),
+      get: vi.fn(() => Promise.resolve({ data: {} })),
+      interceptors: {
+        request: { use: vi.fn() },
+        response: { use: vi.fn() },
+      },
     },
-  },
-}));
+    getAccessToken: () => accessToken,
+    setAccessToken: (jwt) => { accessToken = jwt || null; },
+    clearAccessToken: () => { accessToken = null; },
+    refreshAccessToken: vi.fn(() => Promise.reject({ response: { status: 401 } })),
+    revokeSession: vi.fn(() => Promise.resolve()),
+    isBackendUnreachable: () => false,
+  };
+});
 
-// Clear localStorage before each test
+// Clear localStorage and the in-memory access token before each test
 beforeEach(() => {
   localStorage.clear();
+  clearAccessToken();
 });
 
 describe('AuthContext', () => {

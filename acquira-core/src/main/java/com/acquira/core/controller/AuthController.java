@@ -338,7 +338,9 @@ public class AuthController {
 
         Map<String, Object> response = new HashMap<>();
         response.put("jwt", accessToken);
-        response.put("refreshToken", refreshToken); // Still in body for backward compat; frontend should migrate to cookie
+        // The refresh token travels ONLY in the HttpOnly cookie set below (pentest
+        // 2026-10-04, H6). Returning it in the body too let the SPA keep a 7-day
+        // credential in localStorage, where any XSS could read it.
         response.put("allowedTenants", allowedTenants);
         response.put("defaultTenantId", effectiveTenantId);
         response.put("roles", userDetails.getAuthorities());
@@ -403,11 +405,39 @@ public class AuthController {
 
     /** Whether this user must clear an email OTP, per the tenant's policy. */
     private boolean isMfaRequired(User user) {
-        // SSO accounts authenticate at the identity provider, which owns their MFA.
-        // They also may have no usable local password, so a code here is meaningless.
-        if (user.isSsoUser()) return false;
+        // Pentest 2026-10-04 (F11): SSO-flagged users used to skip MFA here. That
+        // made sense for the SSO callback (the IdP owns that factor) but this is
+        // the PASSWORD login path — an account the IdP never saw. Any account that
+        // reached this point proved a local password, so the tenant's MFA policy
+        // applies regardless of whether it is also linked to an IdP.
         Long tenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
         return securityPolicyService.mfaRequiredForRole(tenantId, user.getRole());
+    }
+
+    /**
+     * A wrong second factor (login MFA code or password-reset OTP) counts toward
+     * the same lockout as a wrong password. Without this neither flow ever locked
+     * the account, so code guessing was bounded only by per-challenge budgets.
+     */
+    private void registerSecondFactorFailure(User user) {
+        if (user == null) return;
+        try {
+            Long tenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
+            int maxAttempts = securityPolicyService.maxFailedAttempts(tenantId);
+            int lockMinutes = securityPolicyService.lockoutDurationMinutes(tenantId);
+            user.setFailedLoginAttempts(user.getFailedLoginAttempts() + 1);
+            user.setLastFailedLogin(LocalDateTime.now());
+            if (user.getFailedLoginAttempts() >= maxAttempts) {
+                user.setLockedUntil(LocalDateTime.now().plusMinutes(lockMinutes));
+                auditService.log("ACCOUNT_LOCKED",
+                        "Account '" + user.getUsername() + "' locked after repeated bad verification codes",
+                        user.getUsername());
+            }
+            userRepository.save(user);
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(AuthController.class)
+                    .warn("Could not record second-factor failure for {}: {}", user.getUsername(), e.getMessage());
+        }
     }
 
     /**
@@ -520,7 +550,9 @@ public class AuthController {
                     "challengeDead", true));
         }
 
-        if (challenge.getAttemptCount() >= MFA_MAX_ATTEMPTS) {
+        // Atomic guess budget — see verify-otp (pentest 2026-10-04, M8).
+        if (mfaTokenRepository.tryConsumeAttempt(challenge.getId(), MFA_MAX_ATTEMPTS) == 0) {
+            challenge = mfaTokenRepository.findById(challenge.getId()).orElse(challenge);
             challenge.setUsed(true);
             mfaTokenRepository.save(challenge);
             auditService.log("MFA_LOCKED",
@@ -531,14 +563,17 @@ public class AuthController {
                     "error", "Too many incorrect codes. Please sign in again to get a new one.",
                     "challengeDead", true));
         }
+        challenge = mfaTokenRepository.findById(challenge.getId()).orElse(challenge);
 
         if (!passwordEncoder.matches(otp.trim(), challenge.getOtpHash())) {
-            challenge.setAttemptCount(challenge.getAttemptCount() + 1);
-            mfaTokenRepository.save(challenge);
             recordFailedAttempt(rateKey);
             auditService.log("MFA_FAIL",
                     "Bad MFA code for '" + challenge.getUser().getUsername() + "' from " + getClientIp(httpRequest),
                     challenge.getUser().getUsername());
+            // A wrong second factor is a failed sign-in: it counts toward lockout,
+            // so an attacker holding the password cannot churn fresh challenges
+            // indefinitely (each one used to come with a clean 5-guess budget).
+            registerSecondFactorFailure(challenge.getUser());
             return ResponseEntity.status(401).body(Map.of("error", MFA_GENERIC_FAIL));
         }
 
@@ -601,7 +636,8 @@ public class AuthController {
 
         String otp = String.format("%06d", OTP_RNG.nextInt(1_000_000));
         challenge.setOtpHash(passwordEncoder.encode(otp));
-        challenge.setAttemptCount(0);
+        // The guess budget is per CHALLENGE, not per code: resend used to reset it,
+        // which turned "5 attempts" into "5 attempts per resend" (pentest M8).
         challenge.setExpiresAt(LocalDateTime.now().plusMinutes(ttlMinutes));
         mfaTokenRepository.save(challenge);
 
@@ -631,10 +667,8 @@ public class AuthController {
                 }
             }
         }
-        // Fallback: read from request body (backward compat)
-        if ((refreshToken == null || refreshToken.isBlank()) && payload != null) {
-            refreshToken = payload.get("refreshToken");
-        }
+        // No body fallback (pentest 2026-10-04, H6): accepting the token from JSON
+        // kept the localStorage copy useful to an attacker. Cookie only.
         if (refreshToken == null || refreshToken.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Refresh token is required"));
         }
@@ -684,12 +718,35 @@ public class AuthController {
             ResponseCookie newCookie = buildRefreshCookie(newRefreshToken, refreshTtlMs / 1000);
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE, newCookie.toString())
-                    .body(Map.of(
-                        "jwt", newAccessToken,
-                        "refreshToken", newRefreshToken)); // Body included for backward compat
+                    .body(Map.of("jwt", newAccessToken)); // refresh token: cookie only
         } catch (Exception e) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid refresh token"));
         }
+    }
+
+    /**
+     * Single-device logout: revoke the refresh token in the cookie and clear the
+     * cookie. Works without a bearer token (the access token may already have
+     * expired) and is idempotent, so the SPA can fire-and-forget it.
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(jakarta.servlet.http.HttpServletRequest httpRequest) {
+        String refreshToken = null;
+        if (httpRequest.getCookies() != null) {
+            for (jakarta.servlet.http.Cookie c : httpRequest.getCookies()) {
+                if ("refreshToken".equals(c.getName())) { refreshToken = c.getValue(); break; }
+            }
+        }
+        boolean revoked = refreshTokenService.revokeToken(refreshToken);
+        if (revoked) {
+            try {
+                String username = jwtUtil.extractUsername(refreshToken);
+                auditService.log("LOGOUT", "User '" + username + "' logged out", username);
+            } catch (Exception ignored) { /* expired/garbled token: already revoked by hash, nothing to audit */ }
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString())
+                .body(Map.of("message", "Logged out"));
     }
 
     // #14: Logout all devices — revokes all refresh tokens
@@ -893,8 +950,26 @@ public class AuthController {
         if (t.isExpired() || t.getOtpHash() == null) {
             return ResponseEntity.badRequest().body(Map.of("error", OTP_GENERIC_FAIL));
         }
-        if (t.getAttemptCount() >= OTP_MAX_ATTEMPTS) {
-            // Burn the token so it can't be brute-forced further; force a re-request.
+
+        // Pentest 2026-10-04 (H4): three gaps made the 6-digit code brute-forceable.
+        //  1. No per-IP limit on THIS endpoint (only forgot-password had one), so a
+        //     caller could cycle fresh codes and spend 5 guesses on each. Limit per
+        //     (ip|email) like the other auth endpoints.
+        //  2. The attempt counter was read-check-save in Java; N concurrent requests
+        //     all saw attemptCount < 5 before any wrote. The slot is now taken with
+        //     a single atomic UPDATE, and the row is re-read afterwards.
+        //  3. Wrong codes never counted toward the account lockout — handled below.
+        String ip = getClientIp(httpRequest);
+        String verifyKey = ip + "|otpverify|" + email.trim().toLowerCase();
+        if (isRateLimited(verifyKey, MAX_IP_ATTEMPTS)) {
+            return ResponseEntity.status(429).body(Map.of(
+                    "error", "Too many attempts. Please wait a moment and try again."));
+        }
+        recordFailedAttempt(verifyKey);
+
+        if (resetTokenRepository.tryConsumeAttempt(t.getId(), OTP_MAX_ATTEMPTS) == 0) {
+            // Budget exhausted — burn the token so it can't be brute-forced further.
+            t = resetTokenRepository.findById(t.getId()).orElse(t);
             t.setUsed(true);
             resetTokenRepository.save(t);
             auditService.log("PWRESET_OTP_LOCKED",
@@ -903,14 +978,15 @@ public class AuthController {
             return ResponseEntity.status(429).body(Map.of("error",
                     "Too many incorrect attempts. Please request a new code."));
         }
+        t = resetTokenRepository.findById(t.getId()).orElse(t);
 
         if (!passwordEncoder.matches(otp.trim(), t.getOtpHash())) {
-            t.setAttemptCount(t.getAttemptCount() + 1);
-            resetTokenRepository.save(t);
             auditService.log("PWRESET_OTP_FAIL",
-                    "Bad password-reset OTP for '" + userOpt.get().getUsername() + "' from " + getClientIp(httpRequest));
+                    "Bad password-reset OTP for '" + userOpt.get().getUsername() + "' from " + ip);
+            registerSecondFactorFailure(userOpt.get());
             return ResponseEntity.badRequest().body(Map.of("error", OTP_GENERIC_FAIL));
         }
+        loginAttempts.remove(verifyKey);
 
         // Correct — mark verified, issue a fresh opaque ticket, extend the window
         // so the user has time to type a new password.

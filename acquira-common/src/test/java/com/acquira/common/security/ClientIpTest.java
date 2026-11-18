@@ -32,4 +32,22 @@ class ClientIpTest {
     void zeroProxiesIgnoresTheHeader() {
         assertEquals(REMOTE, ClientIp.resolve("1.2.3.4", REMOTE, 0));
     }
+
+    @Test
+    void crlfAndOtherNonAddressCharsAreStripped() {
+        // log-injection attempt: forged line after the address
+        // (hex letters are legal IPv6 chars, so the forged text here deliberately avoids a-f)
+        assertEquals("203.0.113.9", ClientIp.resolve("203.0.113.9\r\nroot login OK", REMOTE, 1));
+        assertEquals("203.0.113.9", ClientIp.resolve("203.0.113.9 <!>", REMOTE, 1));
+        // legal IPv6 forms survive intact
+        assertEquals("[2001:db8::1]:8443", ClientIp.resolve("[2001:db8::1]:8443", REMOTE, 1));
+        assertEquals("fe80::1%25", ClientIp.resolve("fe80::1%25", REMOTE, 1));
+    }
+
+    @Test
+    void garbageOnlyOrOverlongHopFallsBackOrIsCapped() {
+        assertEquals(REMOTE, ClientIp.resolve("\r\n\t;;", REMOTE, 1));
+        String longHop = "1".repeat(200);
+        assertEquals(64, ClientIp.resolve(longHop, REMOTE, 1).length());
+    }
 }

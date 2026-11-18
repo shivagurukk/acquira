@@ -35,6 +35,7 @@ public class SalesCountryLeadController {
         return ResponseEntity.ok(salesCountryLeadService.getCountryLeads(getTenantId()));
     }
 
+    @PreAuthorize("@perm.can('sales.country-management', 'EDIT')")
     @PostMapping("/country-leads")
     public ResponseEntity<SalesCountryLead> createCountryLead(@RequestBody Map<String, Object> payload) {
         String name = (String) payload.get("name");
@@ -45,6 +46,7 @@ public class SalesCountryLeadController {
                 salesCountryLeadService.createCountryLead(getTenantId(), name, email, countryCode, isDefault));
     }
 
+    @PreAuthorize("@perm.can('sales.country-management', 'EDIT')")
     @PutMapping("/country-leads/{id}")
     public ResponseEntity<SalesCountryLead> updateCountryLead(@PathVariable Long id,
             @RequestBody Map<String, Object> payload) {
@@ -56,6 +58,7 @@ public class SalesCountryLeadController {
                 salesCountryLeadService.updateCountryLead(getTenantId(), id, name, email, countryCode, isDefault));
     }
 
+    @PreAuthorize("@perm.can('sales.country-management', 'EDIT')")
     @DeleteMapping("/country-leads/{id}")
     public ResponseEntity<Void> deleteCountryLead(@PathVariable Long id) {
         salesCountryLeadService.deleteCountryLead(getTenantId(), id);
@@ -70,6 +73,7 @@ public class SalesCountryLeadController {
         return ResponseEntity.ok(salesCountryLeadService.getTeamLeadsWithStatus(getTenantId()));
     }
 
+    @PreAuthorize("@perm.can('sales.country-management', 'EDIT')")
     @PostMapping("/assign")
     public ResponseEntity<?> assignTeamLead(@RequestBody Map<String, Object> payload) {
         Object teamLeadIdRaw = payload.get("teamLeadId");
@@ -91,6 +95,7 @@ public class SalesCountryLeadController {
         }
     }
 
+    @PreAuthorize("@perm.can('sales.country-management', 'EDIT')")
     @PostMapping("/auto-assign")
     public ResponseEntity<Void> autoAssign() {
         salesCountryLeadService.autoAssignUnmapped(getTenantId());

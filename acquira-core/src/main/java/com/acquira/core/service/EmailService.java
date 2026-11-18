@@ -123,7 +123,33 @@ public class EmailService {
 
     /** Tenant-explicit variant for pre-login flows where TenantContext is unset. */
     public boolean sendEmail(Long tenantId, String toEmail, String subject, String body) {
-        ResolvedSender rs = resolveSender(tenantId);
+        return sendWith(resolveSender(tenantId), toEmail, subject, body);
+    }
+
+    /**
+     * Sender for SECURITY mail (password-reset and sign-in codes). Pentest
+     * 2026-10-04 (H3): these used to go through the user's tenant SMTP config,
+     * which a Bank Admin controls — so a tenant admin could point SMTP at a relay
+     * they own and read the OTPs of every user whose default tenant is theirs,
+     * super admins included. The platform relay (spring.mail.*) is tried FIRST;
+     * the tenant config is only a fallback so a deployment without a platform
+     * relay keeps working (MFA fails closed, so "no sender" would lock everyone
+     * out). Operators should configure spring.mail.* in production.
+     */
+    private ResolvedSender resolveSecuritySender(Long tenantId) {
+        if (fallbackMailSender != null && fallbackMailHost != null && !fallbackMailHost.isBlank()) {
+            return new ResolvedSender(fallbackMailSender, fallbackFromAddress, null);
+        }
+        ResolvedSender tenantSender = resolveSender(tenantId);
+        if (tenantSender != null) {
+            log.warn("[EMAIL] Security code for tenant {} is being sent via the TENANT's SMTP config "
+                    + "because no platform relay (spring.mail.*) is configured. A tenant admin "
+                    + "controls that relay — configure a platform SMTP for OTP delivery.", tenantId);
+        }
+        return tenantSender;
+    }
+
+    private boolean sendWith(ResolvedSender rs, String toEmail, String subject, String body) {
         if (rs == null) {
             log.warn("[EMAIL] No SMTP configured (no active tenant config, no spring.mail.*). "
                     + "Would send to {}: {}", toEmail, subject);
@@ -278,8 +304,7 @@ public class EmailService {
      * still be completed locally.
      */
     public void sendPasswordResetOtp(Long tenantId, String toEmail, String username, String otp, int ttlMinutes) {
-        boolean sent = sendEmail(
-                tenantId,
+        boolean sent = sendWith(resolveSecuritySender(tenantId),
                 toEmail,
                 "Your Acquira verification code",
                 "Hello " + (username != null ? username : "") + ",\n\n"
@@ -290,7 +315,12 @@ public class EmailService {
                         + "your password will not change.\n\n"
                         + "\u2014 Acquira Team");
         if (!sent) {
-            log.warn("[EMAIL] OTP email not sent (no SMTP). Reset OTP for {}: {}", username, otp);
+            // Never log the code (pentest 2026-10-04, L3): anyone with log access
+            // could reset any password. The dev convenience this used to offer is
+            // what auth_security_smoke.sh relied on — configure a local SMTP
+            // (e.g. MailHog) instead.
+            log.warn("[EMAIL] Password-reset OTP for '{}' could NOT be delivered (SMTP not configured or failing).",
+                    username);
         }
     }
 
@@ -303,8 +333,7 @@ public class EmailService {
      * surface as an error rather than let the sign-in continue.
      */
     public boolean sendLoginMfaOtp(Long tenantId, String toEmail, String username, String otp, int ttlMinutes) {
-        boolean sent = sendEmail(
-                tenantId,
+        boolean sent = sendWith(resolveSecuritySender(tenantId),
                 toEmail,
                 "Your Acquira sign-in code",
                 "Hello " + (username != null ? username : "") + ",\n\n"

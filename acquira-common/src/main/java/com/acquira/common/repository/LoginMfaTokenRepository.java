@@ -24,4 +24,10 @@ public interface LoginMfaTokenRepository extends JpaRepository<LoginMfaToken, Lo
     @Modifying
     @Query("DELETE FROM LoginMfaToken t WHERE t.expiresAt < :cutoff")
     int deleteExpiredBefore(LocalDateTime cutoff);
+
+    /** Atomically spend one guess; 0 means the budget is exhausted. See PasswordResetTokenRepository. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE LoginMfaToken t SET t.attemptCount = t.attemptCount + 1 "
+         + "WHERE t.id = :id AND t.used = false AND t.attemptCount < :max")
+    int tryConsumeAttempt(Long id, int max);
 }

@@ -8,6 +8,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { getAccessToken } from '../../api/axios';
 import { formatMsf, formatCurrency as fmtMoney, formatCompactCurrency } from '../../utils/formatters';
 import { useDataBounds } from '../../hooks/useDataBounds';
 
@@ -198,7 +199,7 @@ const MerchantFinancialSummary = () => {
     const fetchReport = async (override) => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
+            const token = getAccessToken();
             const tenantId = localStorage.getItem('defaultTenantId');
             const source = (override && override.startDate !== undefined) ? override : filters;
             const body = { ...source };

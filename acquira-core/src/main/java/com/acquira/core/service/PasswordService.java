@@ -48,14 +48,34 @@ public class PasswordService {
         "qwertyuiop","asdfghjkl","zxcvbnm","1234567890"
     );
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PasswordService.class);
+    private final RefreshTokenService refreshTokenService;
+
     public PasswordService(PasswordHistoryRepository historyRepository,
                            PasswordEncoder passwordEncoder,
                            UserRepository userRepository,
-                           SecurityPolicyService policyService) {
+                           SecurityPolicyService policyService,
+                           RefreshTokenService refreshTokenService) {
         this.historyRepository = historyRepository;
         this.passwordEncoder = passwordEncoder;
         this.userRepository = userRepository;
         this.policyService = policyService;
+        this.refreshTokenService = refreshTokenService;
+    }
+
+    /**
+     * A password change must end every other session (pentest 2026-10-04, H6):
+     * otherwise a refresh token lifted before the change keeps minting access
+     * tokens for up to 7 days after the user believes the account is secured.
+     * The caller re-issues its own session afterwards where needed.
+     */
+    private void revokeSessions(User user, String why) {
+        try {
+            int n = refreshTokenService.revokeAllForUser(user.getUsername());
+            if (n > 0) log.info("Revoked {} session(s) for '{}' after {}", n, user.getUsername(), why);
+        } catch (Exception e) {
+            log.warn("Could not revoke sessions for '{}': {}", user.getUsername(), e.getMessage());
+        }
     }
 
     /**
@@ -242,6 +262,10 @@ public class PasswordService {
         // 6. Record in history
         recordPasswordInHistory(user, encoded);
 
+        // 7. Every other device is signed out; the browser that made this call
+        //    re-authenticates with the new password (frontend already routes there).
+        revokeSessions(user, "self-service password change");
+
         return null; // Success
     }
 
@@ -279,6 +303,10 @@ public class PasswordService {
 
         // 4. Record in history
         recordPasswordInHistory(user, encoded);
+
+        // 5. An admin reset is usually a response to a compromise — end the
+        //    target's existing sessions, not just their password.
+        revokeSessions(user, "admin password reset");
 
         return null;
     }

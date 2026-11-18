@@ -75,17 +75,24 @@ public class PermissionEvaluator {
 
     /**
      * Fallback for an environment where V2026_09_26_02 has not been applied.
-     * Grants VIEW only — the legacy model cannot express anything else, and
-     * inventing EDIT from a VIEW grant is exactly the conflation this class
-     * exists to remove.
+     * Every legacy sys_group_menu row yields VIEW; the admin groups also get
+     * EDIT and EXPORT on the same screens — the same rule V2026_09_26_02
+     * "Backfill 2" applies when the new model is created. Mutating endpoints
+     * now ask for EDIT (pentest 2026-10-04, M1), so without this a bank admin
+     * on a pre-migration database would lose every write. Everyone else stays
+     * read-only, which is the safe direction to be wrong in.
      */
     private static final String LEGACY_SQL =
-        "SELECT REPLACE(LTRIM(m.path, '/'), '/', '.') || ':VIEW' " +
+        "SELECT REPLACE(LTRIM(m.path, '/'), '/', '.') || ':' || a.action " +
         "FROM sys_group_menu gm " +
         "JOIN sys_menu m             ON m.menu_id   = gm.menu_id " +
         "JOIN user_tenant_access uta ON uta.group_id = gm.group_id " +
         "JOIN users u                ON u.user_id   = uta.user_id " +
-        "WHERE u.username = ? AND uta.tenant_id = ?";
+        "JOIN sys_user_group g       ON g.group_id  = gm.group_id " +
+        "CROSS JOIN (VALUES ('VIEW'), ('EDIT'), ('EXPORT')) AS a(action) " +
+        "WHERE u.username = ? AND uta.tenant_id = ? " +
+        "  AND (a.action = 'VIEW' " +
+        "       OR g.group_name IN ('Super Admin', 'Bank Admin', 'SUPER_ADMIN', 'ADMIN'))";
 
     private final JdbcTemplate jdbc;
 

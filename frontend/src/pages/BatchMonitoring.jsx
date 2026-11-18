@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Activity, CheckCircle, XCircle, Clock, RefreshCw, Loader2, Wifi, WifiOff } from 'lucide-react';
-import api from '../api/axios';
+import api, { getAccessToken } from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
 import PageHeader from '../components/PageHeader';
 
@@ -20,7 +20,7 @@ const BatchMonitoring = () => {
     const [loading, setLoading] = useState(true);
     const [sseConnected, setSseConnected] = useState(false);
     const [sseFailed, setSseFailed] = useState(false);
-    const eventSourceRef = useRef(null);
+    const eventSourceRef = useRef(null); // AbortController of the live fetch() stream
     const retryTimeoutRef = useRef(null);
     const sseFailTimerRef = useRef(null);
 
@@ -36,38 +36,103 @@ const BatchMonitoring = () => {
         }
     };
 
+    // Handle one `event: jobs` frame — same state update the old EventSource
+    // listener performed.
+    const handleJobsEvent = (payload) => {
+        try {
+            const data = JSON.parse(payload);
+            const liveMap = {};
+            data.forEach(job => { liveMap[job.executionId] = job; });
+            setLiveJobs(liveMap);
+            setSseConnected(true);
+        } catch (e) {
+            console.error('SSE parse error:', e);
+        }
+    };
+
+    // Live job stream over fetch() rather than EventSource.
+    //
+    // F6-2: EventSource cannot set headers, so the previous version smuggled
+    // the JWT into the query string (?token=...), where it lands in access
+    // logs, proxies and browser history — and the backend never even read it.
+    // fetch() lets us send the normal Authorization / X-Tenant-Id headers and
+    // read the SSE body incrementally. Frames are blank-line separated; we
+    // collect `event:` / `data:` fields and dispatch `jobs` exactly as before.
     const connectSSE = () => {
-        if (eventSourceRef.current) eventSourceRef.current.close();
+        if (eventSourceRef.current) eventSourceRef.current.abort();
 
-        const token    = localStorage.getItem('token');
-        const tenantId = localStorage.getItem('defaultTenantId');
-        const url      = `/api/batch/jobs/live?token=${encodeURIComponent(token)}&tenantId=${tenantId}`;
-        const es       = new EventSource(url);
+        const controller = new AbortController();
+        eventSourceRef.current = controller;
 
-        es.addEventListener('jobs', (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                const liveMap = {};
-                data.forEach(job => { liveMap[job.executionId] = job; });
-                setLiveJobs(liveMap);
-                setSseConnected(true);
-            } catch (e) {
-                console.error('SSE parse error:', e);
-            }
-        });
-
-        es.onerror = () => {
+        const scheduleRetry = () => {
+            if (controller.signal.aborted) return;   // unmounted / superseded
             setSseConnected(false);
-            es.close();
             // Show a banner after 10s of failed SSE — polling is the fallback
             if (sseFailTimerRef.current) clearTimeout(sseFailTimerRef.current);
             sseFailTimerRef.current = setTimeout(() => setSseFailed(true), 10000);
             retryTimeoutRef.current = setTimeout(connectSSE, 5000);
         };
 
-        es.onopen = () => setSseConnected(true);
+        const tenantId = localStorage.getItem('defaultTenantId');
+        const headers = { Accept: 'text/event-stream' };
+        const token = getAccessToken();
+        if (token) headers.Authorization = `Bearer ${token}`;
+        if (tenantId && tenantId !== 'null' && tenantId !== 'undefined') headers['X-Tenant-Id'] = tenantId;
 
-        eventSourceRef.current = es;
+        (async () => {
+            try {
+                // tenantId stays in the query (it is not a secret and the
+                // endpoint accepted it before); the JWT does not.
+                const qs = headers['X-Tenant-Id'] ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+                const response = await fetch(`/api/batch/jobs/live${qs}`, {
+                    headers, credentials: 'include', signal: controller.signal,
+                });
+                if (!response.ok || !response.body) throw new Error(`SSE HTTP ${response.status}`);
+                setSseConnected(true);
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let eventName = 'message';
+                let dataLines = [];
+
+                const dispatch = () => {
+                    if (dataLines.length > 0 && eventName === 'jobs') {
+                        handleJobsEvent(dataLines.join('\n'));
+                    }
+                    eventName = 'message';
+                    dataLines = [];
+                };
+
+                for (;;) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    // Normalise CRLF so a blank line is always '\n\n'.
+                    buffer = buffer.replace(/\r\n/g, '\n');
+                    let idx;
+                    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+                        const frame = buffer.slice(0, idx);
+                        buffer = buffer.slice(idx + 2);
+                        frame.split('\n').forEach(line => {
+                            if (!line || line.startsWith(':')) return;      // comment / keep-alive
+                            const colon = line.indexOf(':');
+                            const field = colon === -1 ? line : line.slice(0, colon);
+                            let val = colon === -1 ? '' : line.slice(colon + 1);
+                            if (val.startsWith(' ')) val = val.slice(1);
+                            if (field === 'event') eventName = val;
+                            else if (field === 'data') dataLines.push(val);
+                        });
+                        dispatch();
+                    }
+                }
+                // Server closed the stream cleanly — reconnect like EventSource would.
+                scheduleRetry();
+            } catch (err) {
+                if (err?.name === 'AbortError') return;
+                scheduleRetry();
+            }
+        })();
     };
 
     useEffect(() => {
@@ -76,7 +141,7 @@ const BatchMonitoring = () => {
         const interval = setInterval(fetchJobs, 30000);
         return () => {
             clearInterval(interval);
-            if (eventSourceRef.current) eventSourceRef.current.close();
+            if (eventSourceRef.current) eventSourceRef.current.abort();
             if (retryTimeoutRef.current)  clearTimeout(retryTimeoutRef.current);
             if (sseFailTimerRef.current)  clearTimeout(sseFailTimerRef.current);
         };

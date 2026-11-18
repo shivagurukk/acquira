@@ -379,7 +379,15 @@ public class ReportExportService {
         return key.replace("_", " ").substring(0, 1).toUpperCase() + key.replace("_", " ").substring(1);
     }
 
+    /**
+     * RFC-4180 quoting plus formula-injection guard: a leading =+-@ (or tab/CR) in a
+     * user-supplied value is prefixed with a single quote so Excel treats it as text
+     * instead of evaluating it. Same technique as AnalyticsController.csvCell.
+     * (The xlsx path uses POI setCellValue(String), which never evaluates formulas.)
+     */
     private String csvEscape(String val) {
+        if (val == null) return "";
+        if (!val.isEmpty() && "=+-@\t\r".indexOf(val.charAt(0)) >= 0) val = "'" + val;
         if (val.contains(",") || val.contains("\"") || val.contains("\n")) {
             return "\"" + val.replace("\"", "\"\"") + "\"";
         }

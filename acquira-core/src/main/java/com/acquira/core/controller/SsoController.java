@@ -2,8 +2,11 @@ package com.acquira.core.controller;
 
 import com.acquira.common.model.AccessRequest;
 import com.acquira.common.model.User;
+import com.acquira.common.model.UserTenantAccess;
 import com.acquira.common.repository.AccessRequestRepository;
 import com.acquira.common.repository.UserRepository;
+import com.acquira.common.security.ClientIp;
+import com.acquira.common.security.CustomUserDetailsService;
 import com.acquira.common.security.JwtUtil;
 import com.acquira.core.service.TenantService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -18,7 +21,10 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 // GAP-19: Audit logging
 import com.acquira.common.service.AuditService;
@@ -34,17 +40,49 @@ import com.acquira.common.repository.TenantRepository;
  * Flow:
  * 1. Frontend calls GET /api/sso/microsoft/config → gets clientId + authUrl (or sso_enabled=false)
  * 2. Frontend redirects user to Microsoft login
- * 3. Microsoft redirects back to frontend with ?code=...
- * 4. Frontend calls POST /api/sso/microsoft/callback with { code }
- * 5. Backend exchanges code for token, extracts email, looks up user
+ * 3. Microsoft redirects back to frontend with ?code=...&state=...
+ * 4. Frontend calls POST /api/sso/microsoft/callback with { code, state }
+ * 5. Backend exchanges code for tokens, VALIDATES the id_token, resolves the account
  *    - If user exists + approved → issue JWT
  *    - If user exists + pending → return "pending" status
- *    - If user doesn't exist → create access_request, return "request_submitted"
+ *    - If user doesn't exist → return "not_registered" so an access request can be submitted
+ *
+ * <h3>Pentest 2026-10-04 — what changed and why</h3>
+ * <ul>
+ *   <li><b>C2 — identity was an unverified e-mail.</b> The callback read Graph
+ *       {@code /me.mail} and looked it up globally. An Entra admin anywhere (with the
+ *       default {@code tenant-id=common}) could set {@code mail} on one of their users
+ *       to a victim's address and sign in as them. The {@code id_token} returned by the
+ *       token endpoint is now parsed and its {@code aud}, {@code iss}, {@code tid} and
+ *       {@code exp} are checked; the account is linked on the immutable {@code oid},
+ *       and {@code common}/{@code organizations}/{@code consumers} are refused unless
+ *       the tenant pins an explicit {@code sso_allowed_tenant_ids} list.</li>
+ *   <li><b>C1 — a bank admin could re-point the tenant's IdP.</b> Writing {@code sso_*}
+ *       is now super-admin only (AdminController), and a tenant-scoped IdP can only
+ *       sign in users who hold an access row in THAT tenant — never a platform super
+ *       admin.</li>
+ *   <li><b>F11</b> — lockout / expiry are enforced on this path too; linking an
+ *       existing local account no longer disables anything (MFA on password login
+ *       is decided by policy, not by {@code ssoProvider}).</li>
+ *   <li><b>F13</b> — {@code state} is mandatory, DB-backed and tenant-bound
+ *       ({@link com.acquira.core.service.SsoStateTokenService}); error bodies are generic.</li>
+ *   <li><b>F12</b> — {@code /request-access} is rate-limited, answers identically whether
+ *       or not the address is known, and stores no caller-asserted identity.</li>
+ * </ul>
+ * The id_token signature is not verified here: it is received directly from
+ * {@code login.microsoftonline.com} over TLS in the code exchange, which OIDC Core
+ * §3.1.3.7 accepts as sufficient for the code flow.
  */
 @RestController
 @RequestMapping("/api/sso")
 @Slf4j
 public class SsoController {
+
+    private static final String PROVIDER = "MICROSOFT";
+    private static final String GENERIC_ERROR = "SSO authentication failed. Please try again or contact your administrator.";
+    private static final Set<String> UNPINNED_TENANTS = Set.of("common", "organizations", "consumers");
+    private static final int REQUEST_ACCESS_PER_MINUTE = 5;
+    private static final long WINDOW_MS = 60_000;
 
     private final UserRepository userRepository;
     private final AccessRequestRepository accessRequestRepository;
@@ -55,15 +93,18 @@ public class SsoController {
     private final com.acquira.common.repository.UserTenantAccessRepository userTenantAccessRepository;
     private final TenantSettingRepository tenantSettingRepository;
     private final TenantRepository tenantRepository;
+    private final AuditService auditService;
+    private final com.acquira.core.service.SsoStateTokenService stateTokens;
+    private final com.acquira.core.service.RefreshTokenService refreshTokenService;
+    private final com.acquira.core.service.SecurityPolicyService securityPolicyService;
+    private final com.acquira.core.service.MenuVisibilityService menuVisibilityService;
+    private final com.acquira.common.security.PermissionEvaluator permissionEvaluator;
+    private final com.acquira.common.service.CryptoService cryptoService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestTemplate restTemplate = new RestTemplate();
 
-    // GAP-22: Store OAuth state tokens for CSRF protection (in-memory, short-lived).
-    // Each state token is BOUND to the tenant whose SSO config minted the auth URL,
-    // so the callback exchanges the code against the SAME client/secret/IdP tenant.
-    private record StateEntry(long createdAt, Long tenantId) {}
-    private final java.util.concurrent.ConcurrentHashMap<String, StateEntry> stateTokens = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final long STATE_TTL_MS = 600_000; // 10 minutes
+    /** ip -> [count, windowStart] for /request-access. */
+    private final ConcurrentHashMap<String, long[]> requestAccessAttempts = new ConcurrentHashMap<>();
 
     @Value("${sso.microsoft.client-id:}")
     private String clientId;
@@ -80,7 +121,9 @@ public class SsoController {
     @Value("${sso.microsoft.enabled:false}")
     private boolean ssoEnabled;
 
-    private final AuditService auditService;
+    /** Platform-level allow-list of Entra tenant ids when sso.microsoft.tenant-id is not pinned. */
+    @Value("${sso.microsoft.allowed-tenant-ids:}")
+    private String allowedTenantIds;
 
     public SsoController(UserRepository userRepository,
                          AccessRequestRepository accessRequestRepository,
@@ -91,7 +134,13 @@ public class SsoController {
                          com.acquira.common.repository.UserTenantAccessRepository userTenantAccessRepository,
                          TenantSettingRepository tenantSettingRepository,
                          TenantRepository tenantRepository,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         com.acquira.core.service.SsoStateTokenService stateTokens,
+                         com.acquira.core.service.RefreshTokenService refreshTokenService,
+                         com.acquira.core.service.SecurityPolicyService securityPolicyService,
+                         com.acquira.core.service.MenuVisibilityService menuVisibilityService,
+                         com.acquira.common.security.PermissionEvaluator permissionEvaluator,
+                         com.acquira.common.service.CryptoService cryptoService) {
         this.userRepository = userRepository;
         this.accessRequestRepository = accessRequestRepository;
         this.jwtUtil = jwtUtil;
@@ -102,18 +151,23 @@ public class SsoController {
         this.tenantSettingRepository = tenantSettingRepository;
         this.tenantRepository = tenantRepository;
         this.auditService = auditService;
+        this.stateTokens = stateTokens;
+        this.refreshTokenService = refreshTokenService;
+        this.securityPolicyService = securityPolicyService;
+        this.menuVisibilityService = menuVisibilityService;
+        this.permissionEvaluator = permissionEvaluator;
+        this.cryptoService = cryptoService;
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    //  Per-tenant SSO config resolution
+    // ════════════════════════════════════════════════════════════════════════
+
     /**
-     * PER-TENANT SSO (2026-07-11). Replaces the old getEffectiveSsoConfig() which
-     * iterated ALL tenants and merged the first non-blank sso_* value — one bank's
-     * Entra config silently won for the whole platform and two banks could never
-     * have different IdPs. Resolution now picks exactly ONE tenant:
-     *   1. explicit tenantId hint (future bank-picker on the login page),
-     *   2. email-domain match against that tenant's 'sso_email_domains' setting
-     *      (comma/space-separated list, e.g. "acmebank.com, acme.co"),
-     *   3. if exactly ONE tenant has sso_enabled=true in tenant_setting, use it
-     *      (covers the common single-IdP deployment with zero extra config),
+     * PER-TENANT SSO (2026-07-11). Resolution picks exactly ONE tenant:
+     *   1. explicit tenantId hint,
+     *   2. email-domain match against that tenant's 'sso_email_domains' setting,
+     *   3. if exactly ONE tenant has sso_enabled=true, use it,
      *   4. otherwise null → application.properties values only.
      */
     private Long resolveSsoTenantId(String emailHint, Long tenantIdHint) {
@@ -122,7 +176,6 @@ public class SsoController {
 
             List<com.acquira.common.model.Tenant> tenants = tenantRepository.findAll();
 
-            // 2. email-domain match
             if (emailHint != null && emailHint.contains("@")) {
                 String domain = emailHint.substring(emailHint.indexOf('@') + 1).toLowerCase().trim();
                 for (var t : tenants) {
@@ -134,7 +187,6 @@ public class SsoController {
                 }
             }
 
-            // 3. single enabled tenant
             Long only = null;
             for (var t : tenants) {
                 if ("true".equalsIgnoreCase(settingFor(t.getTenantId(), "sso_enabled"))) {
@@ -164,7 +216,8 @@ public class SsoController {
     /**
      * Effective SSO config for ONE tenant: application.properties defaults
      * overlaid with ONLY that tenant's sso_* settings. tenantId null = properties
-     * only (no DB overlay at all — never another tenant's values).
+     * only. The client secret is stored encrypted by AdminController and is
+     * decrypted here (CryptoService passes legacy plaintext rows through).
      */
     private Map<String, String> ssoConfigForTenant(Long tenantId) {
         Map<String, String> cfg = new HashMap<>();
@@ -173,6 +226,7 @@ public class SsoController {
         cfg.put("sso_client_secret", clientSecret);
         cfg.put("sso_tenant_id", azureTenantId);
         cfg.put("sso_redirect_uri", redirectUri);
+        cfg.put("sso_allowed_tenant_ids", allowedTenantIds);
 
         if (tenantId == null) return cfg;
         try {
@@ -180,7 +234,7 @@ public class SsoController {
                 String k = s.getKey();
                 String v = s.getValue();
                 if (k != null && k.startsWith("sso_") && v != null && !v.isBlank()) {
-                    cfg.put(k, v);
+                    cfg.put(k, "sso_client_secret".equals(k) ? cryptoService.decrypt(v) : v);
                 }
             }
         } catch (Exception e) {
@@ -189,11 +243,10 @@ public class SsoController {
         return cfg;
     }
 
-    /**
-     * GET /api/sso/microsoft/config
-     * Returns SSO configuration for the login page.
-     * If SSO is disabled, returns { enabled: false }.
-     */
+    // ════════════════════════════════════════════════════════════════════════
+    //  GET /api/sso/microsoft/config
+    // ════════════════════════════════════════════════════════════════════════
+
     @GetMapping("/microsoft/config")
     public ResponseEntity<?> getSsoConfig(
             @RequestParam(required = false) String email,
@@ -208,61 +261,49 @@ public class SsoController {
         }
 
         String tid = cfg.getOrDefault("sso_tenant_id", "common");
-        // GAP-22: Generate state token for CSRF protection, bound to the resolved tenant
-        String state = UUID.randomUUID().toString();
-        stateTokens.put(state, new StateEntry(System.currentTimeMillis(), ssoTenantId));
-        // Cleanup expired tokens
-        stateTokens.entrySet().removeIf(e -> System.currentTimeMillis() - e.getValue().createdAt() > STATE_TTL_MS);
+        // State is bound to the resolved tenant so the callback exchanges the code
+        // against the SAME client/secret/IdP.
+        String state = stateTokens.generateState(ssoTenantId);
 
-        String authUrl = "https://login.microsoftonline.com/" + tid + "/oauth2/v2.0/authorize"
-            + "?client_id=" + cid
+        String authUrl = "https://login.microsoftonline.com/" + urlEncode(tid) + "/oauth2/v2.0/authorize"
+            + "?client_id=" + urlEncode(cid)
             + "&response_type=code"
-            + "&redirect_uri=" + cfg.getOrDefault("sso_redirect_uri", redirectUri)
+            + "&redirect_uri=" + urlEncode(cfg.getOrDefault("sso_redirect_uri", redirectUri))
             + "&response_mode=query"
-            + "&scope=openid+profile+email+User.Read"
+            + "&scope=" + urlEncode("openid profile email User.Read")
             + "&prompt=select_account"
-            + "&state=" + state;
+            + "&state=" + urlEncode(state);
 
         return ResponseEntity.ok(Map.of(
             "enabled", true,
-            "provider", "MICROSOFT",
+            "provider", PROVIDER,
             "authUrl", authUrl,
             "clientId", cid
         ));
     }
 
-    /**
-     * POST /api/sso/microsoft/callback
-     * Exchanges authorization code for tokens, extracts user info,
-     * and either logs them in or creates an access request.
-     */
+    // ════════════════════════════════════════════════════════════════════════
+    //  POST /api/sso/microsoft/callback
+    // ════════════════════════════════════════════════════════════════════════
+
     @PostMapping("/microsoft/callback")
-    public ResponseEntity<?> handleCallback(@RequestBody Map<String, String> payload) {
+    public ResponseEntity<?> handleCallback(@RequestBody Map<String, String> payload,
+                                            jakarta.servlet.http.HttpServletRequest httpRequest) {
         String code = payload.get("code");
         if (code == null || code.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Authorization code is required"));
         }
 
-        // GAP-22: Validate state token for CSRF protection. The entry also carries the
-        // tenant whose config minted the auth URL, so the code exchange below uses the
-        // SAME client/secret — mandatory for correctness with per-tenant SSO.
-        Long ssoTenantId = null;
-        String state = payload.get("state");
-        if (state != null && !state.isBlank()) {
-            StateEntry entry = stateTokens.remove(state);
-            if (entry == null || System.currentTimeMillis() - entry.createdAt() > STATE_TTL_MS) {
-                log.warn("[SSO] Invalid or expired state token");
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired SSO request. Please try again."));
-            }
-            ssoTenantId = entry.tenantId();
-        } else {
-            // Legacy client without state: best-effort resolution (no email known yet).
-            ssoTenantId = resolveSsoTenantId(null, null);
+        // state is mandatory: it is the CSRF binding AND the tenant binding.
+        var consumed = stateTokens.validateAndConsume(payload.get("state"));
+        if (!consumed.valid()) {
+            log.warn("[SSO] Invalid, expired or missing state token");
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired SSO request. Please try again."));
         }
+        Long ssoTenantId = consumed.tenantId();
 
         Map<String, String> cfg = ssoConfigForTenant(ssoTenantId);
-        boolean enabled = "true".equalsIgnoreCase(cfg.get("sso_enabled"));
-        if (!enabled) {
+        if (!"true".equalsIgnoreCase(cfg.get("sso_enabled"))) {
             return ResponseEntity.badRequest().body(Map.of("error", "SSO is not enabled"));
         }
 
@@ -271,16 +312,14 @@ public class SsoController {
         String effTenantId = cfg.getOrDefault("sso_tenant_id", "common");
 
         try {
-            // 1. Exchange code for token
-            String tokenUrl = "https://login.microsoftonline.com/" + effTenantId + "/oauth2/v2.0/token";
+            // 1. Exchange code for tokens (server-to-server, over TLS, with the client secret)
+            String tokenUrl = "https://login.microsoftonline.com/" + urlEncode(effTenantId) + "/oauth2/v2.0/token";
 
             MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
             form.add("client_id", effClientId);
             form.add("client_secret", effClientSecret);
             form.add("code", code);
-            // GAP-11: Use effective redirect URI (DB overrides properties)
-            String effRedirectUri = cfg.getOrDefault("sso_redirect_uri", redirectUri);
-            form.add("redirect_uri", effRedirectUri);
+            form.add("redirect_uri", cfg.getOrDefault("sso_redirect_uri", redirectUri));
             form.add("grant_type", "authorization_code");
             form.add("scope", "openid profile email User.Read");
 
@@ -289,212 +328,310 @@ public class SsoController {
 
             ResponseEntity<String> tokenResponse = restTemplate.exchange(
                 tokenUrl, HttpMethod.POST, new HttpEntity<>(form, headers), String.class);
-
             JsonNode tokenJson = objectMapper.readTree(tokenResponse.getBody());
 
             if (tokenJson.has("error")) {
-                log.error("[SSO] Token exchange failed: {}", tokenJson.get("error_description").asText("Unknown"));
+                log.error("[SSO] Token exchange failed: {}", tokenJson.path("error_description").asText("Unknown"));
                 return ResponseEntity.badRequest().body(Map.of("error", "Microsoft authentication failed"));
             }
 
-            String accessToken = tokenJson.get("access_token").asText();
+            // 2. Validate the id_token — this, not Graph, is the identity assertion.
+            JsonNode idClaims = parseIdToken(tokenJson.path("id_token").asText(null));
+            String rejection = validateIdToken(idClaims, effClientId, effTenantId, cfg.get("sso_allowed_tenant_ids"));
+            if (rejection != null) {
+                log.warn("[SSO] id_token rejected: {}", rejection);
+                auditService.log("SSO_REJECTED", "id_token rejected: " + rejection, "anonymous");
+                return ResponseEntity.status(403).body(Map.of("error", GENERIC_ERROR));
+            }
+            String oid = idClaims.path("oid").asText(null);
+            String tid = idClaims.path("tid").asText(null);
+            String email = firstNonBlank(idClaims.path("email").asText(null),
+                                         idClaims.path("preferred_username").asText(null));
+            String displayName = idClaims.path("name").asText("");
 
-            // 2. Get user profile from Microsoft Graph
-            HttpHeaders graphHeaders = new HttpHeaders();
-            graphHeaders.setBearerAuth(accessToken);
-            ResponseEntity<String> profileResponse = restTemplate.exchange(
-                "https://graph.microsoft.com/v1.0/me", HttpMethod.GET,
-                new HttpEntity<>(graphHeaders), String.class);
-
-            JsonNode profile = objectMapper.readTree(profileResponse.getBody());
-            String email = profile.has("mail") && !profile.get("mail").isNull()
-                ? profile.get("mail").asText()
-                : profile.has("userPrincipalName") ? profile.get("userPrincipalName").asText() : null;
-            String displayName = profile.has("displayName") ? profile.get("displayName").asText() : "";
-            String ssoId = profile.has("id") ? profile.get("id").asText() : "";
-
+            // 3. Graph /me only for profile enrichment; fall back to it for the address.
+            if (email == null || email.isBlank() || displayName.isBlank()) {
+                try {
+                    HttpHeaders graphHeaders = new HttpHeaders();
+                    graphHeaders.setBearerAuth(tokenJson.path("access_token").asText(""));
+                    ResponseEntity<String> profileResponse = restTemplate.exchange(
+                        "https://graph.microsoft.com/v1.0/me", HttpMethod.GET,
+                        new HttpEntity<>(graphHeaders), String.class);
+                    JsonNode profile = objectMapper.readTree(profileResponse.getBody());
+                    if (email == null || email.isBlank()) {
+                        email = firstNonBlank(profile.path("mail").asText(null),
+                                              profile.path("userPrincipalName").asText(null));
+                    }
+                    if (displayName.isBlank()) displayName = profile.path("displayName").asText("");
+                } catch (Exception e) {
+                    log.debug("[SSO] Graph profile lookup failed: {}", e.getMessage());
+                }
+            }
             if (email == null || email.isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Could not retrieve email from Microsoft account"));
             }
-
             email = email.toLowerCase().trim();
-            log.info("[SSO] Microsoft login for: {} ({})", email, displayName);
+            log.info("[SSO] Microsoft login for oid={} tid={} ({})", oid, tid, email);
 
-            // 3. Look up user by email
-            Optional<User> userOpt = userRepository.findByEmail(email);
-
-            if (userOpt.isPresent()) {
-                User user = userOpt.get();
-
-                // Check approval status
-                if ("PENDING".equals(user.getApprovalStatus())) {
-                    return ResponseEntity.ok(Map.of(
-                        "status", "pending",
-                        "message", "Your access request is pending admin approval."
-                    ));
+            // 4. Resolve the account: by immutable oid first, then by e-mail for first-time linking.
+            Optional<User> userOpt = userRepository.findBySsoProviderAndSsoId(PROVIDER, oid);
+            if (userOpt.isEmpty()) {
+                userOpt = userRepository.findByEmail(email);
+                if (userOpt.isPresent() && userOpt.get().getSsoId() != null
+                        && !userOpt.get().getSsoId().isBlank() && !oid.equals(userOpt.get().getSsoId())) {
+                    // Address matches an account already bound to a DIFFERENT IdP object.
+                    auditService.log("SSO_REJECTED", "oid mismatch for " + email, email);
+                    return ResponseEntity.status(403).body(Map.of("error", GENERIC_ERROR));
                 }
-                if ("REJECTED".equals(user.getApprovalStatus())) {
-                    return ResponseEntity.ok(Map.of(
-                        "status", "rejected",
-                        "message", "Your access request was not approved. Contact your administrator."
-                    ));
-                }
-                if (!user.isActive()) {
-                    return ResponseEntity.status(403).body(Map.of("error", "Account is deactivated"));
-                }
+            }
 
-                // GAP-19: Audit SSO login
-                try { auditService.log("SSO_LOGIN", "SSO login for: " + email, user.getUsername()); } catch (Exception ignored) {}
-
-                // Link SSO if first time
-                if (user.getSsoProvider() == null) {
-                    user.setSsoProvider("MICROSOFT");
-                    user.setSsoId(ssoId);
-                    if (user.getDisplayName() == null || user.getDisplayName().isBlank()) {
-                        user.setDisplayName(displayName);
-                    }
-                    userRepository.save(user);
-                    log.info("[SSO] Linked Microsoft SSO to existing user: {}", user.getUsername());
-                }
-
-                // Issue JWT
-                return issueJwtResponse(user);
-
-            } else {
-                // User not found — check if there's already a pending request
+            if (userOpt.isEmpty()) {
                 if (accessRequestRepository.existsByEmailAndStatus(email, "PENDING")) {
                     return ResponseEntity.ok(Map.of(
                         "status", "pending",
                         "message", "Your access request is already pending. Please wait for admin approval."
                     ));
                 }
-
-                // Return info to frontend so they can submit a request with tenant selection
-                // GAP-8: Only expose tenantId + bankName, not full Tenant entity
-                List<com.acquira.common.model.Tenant> tenants = tenantService.getAllTenants();
-                List<Map<String, Object>> safeTenants = new java.util.ArrayList<>();
-                for (com.acquira.common.model.Tenant t : tenants) {
+                // GAP-8: Only expose tenantId + bankName, not full Tenant entity. When the
+                // IdP is tenant-scoped, only that tenant is offered.
+                List<Map<String, Object>> safeTenants = new ArrayList<>();
+                for (com.acquira.common.model.Tenant t : tenantService.getAllTenants()) {
+                    if (ssoTenantId != null && !ssoTenantId.equals(t.getTenantId())) continue;
                     safeTenants.add(Map.of("tenantId", t.getTenantId(), "bankName", t.getBankName()));
                 }
                 return ResponseEntity.ok(Map.of(
                     "status", "not_registered",
                     "email", email,
                     "displayName", displayName,
-                    "ssoId", ssoId,
                     "message", "No account found for this email. You can request access below.",
                     "availableTenants", safeTenants
                 ));
             }
 
+            User user = userOpt.get();
+
+            // 5. Account state — same gates as password login.
+            if ("PENDING".equals(user.getApprovalStatus())) {
+                return ResponseEntity.ok(Map.of(
+                    "status", "pending",
+                    "message", "Your access request is pending admin approval."
+                ));
+            }
+            if ("REJECTED".equals(user.getApprovalStatus())) {
+                return ResponseEntity.ok(Map.of(
+                    "status", "rejected",
+                    "message", "Your access request was not approved. Contact your administrator."
+                ));
+            }
+            if (!user.isActive() || user.isAccountExpired() || user.isAccountLocked()) {
+                auditService.log("SSO_DENIED", "SSO login denied (inactive/expired/locked) for " + email, user.getUsername());
+                return ResponseEntity.status(403).body(Map.of("error", "Account is not available. Contact your administrator."));
+            }
+
+            // 6. A TENANT's IdP may only sign in members of that tenant — and never a
+            //    platform super admin, whose identity no single bank may assert.
+            if (ssoTenantId != null) {
+                if (CustomUserDetailsService.isSuperAdmin(user)) {
+                    auditService.log("SSO_REJECTED", "Tenant IdP attempted to assert super admin " + email, user.getUsername());
+                    return ResponseEntity.status(403).body(Map.of("error", GENERIC_ERROR));
+                }
+                boolean member = userTenantAccessRepository.findByUserAndTenant_TenantId(user, ssoTenantId).isPresent();
+                if (!member) {
+                    auditService.log("SSO_REJECTED", "User " + email + " is not a member of SSO tenant " + ssoTenantId, user.getUsername());
+                    return ResponseEntity.status(403).body(Map.of("error", GENERIC_ERROR));
+                }
+            }
+
+            // 7. Link on first SSO login (immutable oid, not the e-mail).
+            if (user.getSsoId() == null || user.getSsoId().isBlank()) {
+                user.setSsoProvider(PROVIDER);
+                user.setSsoId(oid);
+                if (user.getDisplayName() == null || user.getDisplayName().isBlank()) {
+                    user.setDisplayName(displayName);
+                }
+                userRepository.save(user);
+                log.info("[SSO] Linked Microsoft identity to user: {}", user.getUsername());
+            }
+
+            try { auditService.log("SSO_LOGIN", "SSO login for: " + email, user.getUsername()); } catch (Exception ignored) {}
+            return issueJwtResponse(user, httpRequest);
+
         } catch (Exception e) {
+            // Generic to the client; the real cause is in the server log.
             log.error("[SSO] Callback failed: {}", e.getMessage(), e);
-            return ResponseEntity.status(500).body(Map.of("error", "SSO authentication failed: " + e.getMessage()));
+            return ResponseEntity.status(500).body(Map.of("error", GENERIC_ERROR));
         }
     }
 
+    /** Decode the payload of a compact JWS without verifying it (see class javadoc). */
+    private JsonNode parseIdToken(String idToken) throws Exception {
+        if (idToken == null || idToken.isBlank()) return objectMapper.createObjectNode();
+        String[] parts = idToken.split("\\.");
+        if (parts.length < 2) return objectMapper.createObjectNode();
+        byte[] json = Base64.getUrlDecoder().decode(parts[1]);
+        return objectMapper.readTree(new String(json, StandardCharsets.UTF_8));
+    }
+
     /**
-     * POST /api/sso/request-access
-     * Called when an SSO user doesn't have an account — submits access request.
+     * @return null when the token is acceptable, otherwise a short reason.
      */
+    private String validateIdToken(JsonNode c, String expectedClientId, String configuredTenant, String allowedTids) {
+        if (c == null || c.isEmpty()) return "no id_token in token response";
+        String aud = c.path("aud").asText(null);
+        String iss = c.path("iss").asText(null);
+        String tid = c.path("tid").asText(null);
+        String oid = c.path("oid").asText(null);
+        long exp = c.path("exp").asLong(0);
+
+        if (aud == null || !aud.equals(expectedClientId)) return "aud mismatch";
+        if (oid == null || oid.isBlank()) return "missing oid";
+        if (tid == null || tid.isBlank()) return "missing tid";
+        if (exp > 0 && exp * 1000L < System.currentTimeMillis() - 60_000L) return "expired";
+        // v2 issuer is always https://login.microsoftonline.com/{tid}/v2.0
+        if (iss == null || !iss.equals("https://login.microsoftonline.com/" + tid + "/v2.0")) return "iss mismatch";
+
+        String configured = configuredTenant == null ? "" : configuredTenant.trim().toLowerCase();
+        if (UNPINNED_TENANTS.contains(configured) || configured.isEmpty()) {
+            // Multi-tenant app registration: ANY Entra directory can mint a valid token,
+            // so an explicit allow-list of directory ids is mandatory.
+            Set<String> allowed = new HashSet<>();
+            if (allowedTids != null) {
+                for (String s : allowedTids.split("[,;\\s]+")) if (!s.isBlank()) allowed.add(s.trim().toLowerCase());
+            }
+            if (allowed.isEmpty()) {
+                return "sso tenant is '" + configured + "' and no sso_allowed_tenant_ids is configured — pin the directory";
+            }
+            if (!allowed.contains(tid.toLowerCase())) return "tid " + tid + " not in allow-list";
+        } else if (!configured.equalsIgnoreCase(tid)) {
+            return "tid " + tid + " does not match configured directory";
+        }
+        return null;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  POST /api/sso/request-access
+    // ════════════════════════════════════════════════════════════════════════
+
     @PostMapping("/request-access")
-    public ResponseEntity<?> requestAccess(@RequestBody Map<String, Object> payload) {
-        String email = (String) payload.get("email");
-        String displayName = (String) payload.get("displayName");
-        String ssoId = (String) payload.get("ssoId");
-        String message = (String) payload.get("message");
-        Number tenantIdNum = (Number) payload.get("tenantId");
+    public ResponseEntity<?> requestAccess(@RequestBody Map<String, Object> payload,
+                                           jakarta.servlet.http.HttpServletRequest httpRequest) {
+        String email = payload.get("email") instanceof String s ? s.toLowerCase().trim() : null;
+        String displayName = payload.get("displayName") instanceof String s ? s : null;
+        String message = payload.get("message") instanceof String s ? s : null;
+        Number tenantIdNum = payload.get("tenantId") instanceof Number n ? n : null;
 
-        if (email == null || email.isBlank()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Email is required"));
+        if (email == null || email.isBlank() || !email.contains("@")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "A valid email is required"));
         }
 
-        // Check if already exists
-        if (userRepository.existsByEmail(email.toLowerCase().trim())) {
-            return ResponseEntity.badRequest().body(Map.of("error", "An account with this email already exists"));
+        // Unauthenticated and writes a row every admin sees: throttle per IP.
+        String ip = ClientIp.of(httpRequest);
+        if (isRateLimited(ip)) {
+            return ResponseEntity.status(429).body(Map.of("error", "Too many requests. Please try again later."));
         }
-        if (accessRequestRepository.existsByEmailAndStatus(email.toLowerCase().trim(), "PENDING")) {
-            return ResponseEntity.badRequest().body(Map.of("error", "A pending request already exists for this email"));
+
+        // Always the same answer (pentest F12): "already registered" vs "already
+        // pending" vs "submitted" let anyone enumerate the user base.
+        Map<String, String> ok = Map.of(
+            "status", "request_submitted",
+            "message", "Your request has been received. You will be notified once it is reviewed.");
+
+        if (userRepository.existsByEmail(email) || accessRequestRepository.existsByEmailAndStatus(email, "PENDING")) {
+            return ResponseEntity.ok(ok);
         }
 
         AccessRequest request = new AccessRequest();
-        request.setEmail(email.toLowerCase().trim());
+        request.setEmail(email);
         request.setDisplayName(displayName);
-        request.setSsoProvider("MICROSOFT");
-        request.setSsoId(ssoId);
+        request.setSsoProvider(PROVIDER);
+        request.setSsoId(null); // never trust a caller-asserted IdP id; the real one is bound at first SSO login
         request.setMessage(message);
         request.setRequestedTenantId(tenantIdNum != null ? tenantIdNum.intValue() : null);
         request.setStatus("PENDING");
         accessRequestRepository.save(request);
 
         log.info("[SSO] Access request created for: {} (tenant: {})", email, tenantIdNum);
+        try { auditService.log("SSO_ACCESS_REQUEST", "Access request from: " + email + " (" + ip + ")", email); } catch (Exception ignored) {}
 
-        // GAP-19: Audit access request
-        // No account exists yet for this requester, so the email is the only
-        // identity available — record it so the row isn't anonymous.
-        try { auditService.log("SSO_ACCESS_REQUEST", "Access request from: " + email, email); } catch (Exception ignored) {}
-
-        return ResponseEntity.ok(Map.of(
-            "status", "request_submitted",
-            "message", "Your access request has been submitted. You will be notified once approved."
-        ));
+        return ResponseEntity.ok(ok);
     }
 
-    /**
-     * Issue JWT response — same structure as AuthController login response.
-     */
-    // Injected RefreshTokenService for SSO login consistency with AuthController
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.acquira.core.service.RefreshTokenService refreshTokenService;
+    private boolean isRateLimited(String ip) {
+        long now = System.currentTimeMillis();
+        long[] d = requestAccessAttempts.compute(ip, (k, v) -> {
+            if (v == null || now - v[1] > WINDOW_MS) return new long[]{1, now};
+            v[0]++;
+            return v;
+        });
+        if (requestAccessAttempts.size() > 50_000) requestAccessAttempts.clear(); // bound memory under abuse
+        return d[0] > REQUEST_ACCESS_PER_MINUTE;
+    }
 
-    private ResponseEntity<?> issueJwtResponse(User user) {
+    // ════════════════════════════════════════════════════════════════════════
+    //  Session issue — same policy as AuthController.issueSession
+    // ════════════════════════════════════════════════════════════════════════
+
+    private ResponseEntity<?> issueJwtResponse(User user, jakarta.servlet.http.HttpServletRequest httpRequest) {
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername());
-        String accessToken = jwtUtil.generateToken(userDetails);
-        String refreshToken = jwtUtil.generateRefreshToken(user.getUsername());
 
-        // Store refresh token in DB for rotation tracking (same as AuthController)
-        if (refreshTokenService != null) {
-            refreshTokenService.storeToken(user.getUsername(), refreshToken,
-                java.time.LocalDateTime.now().plusDays(7), "SSO-LOGIN", "SSO");
-        }
+        Long policyTenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
+        long accessTtlMs = securityPolicyService.accessTokenMillis(policyTenantId);
+        long refreshTtlMs = securityPolicyService.refreshTokenMillis(policyTenantId);
+
+        String accessToken = jwtUtil.generateToken(userDetails, accessTtlMs);
+        String refreshToken = jwtUtil.generateRefreshToken(user.getUsername(), refreshTtlMs);
+
+        refreshTokenService.storeToken(user.getUsername(), refreshToken,
+            LocalDateTime.now().plusSeconds(refreshTtlMs / 1000),
+            httpRequest.getHeader("User-Agent"), ClientIp.of(httpRequest));
+        refreshTokenService.enforceSessionLimit(user.getUsername(),
+            securityPolicyService.maxConcurrentSessions(policyTenantId));
 
         List<com.acquira.common.model.Tenant> allowedTenants = tenantService.getAllowedTenantsForUser(user.getUsername());
-        Long defaultTenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
-        Long effectiveTenantId = defaultTenantId;
+        Long effectiveTenantId = policyTenantId;
         if (effectiveTenantId == null && !allowedTenants.isEmpty()) {
             effectiveTenantId = allowedTenants.get(0).getTenantId();
         }
 
-        final Set<com.acquira.common.model.SysMenu> menus = new HashSet<>();
+        boolean superAdmin = CustomUserDetailsService.isSuperAdmin(user);
+        List<com.acquira.common.model.SysMenu> menus = List.of();
+        Set<String> permissions = Set.of();
         if (effectiveTenantId != null) {
-            Optional<com.acquira.common.model.UserTenantAccess> access = userTenantAccessRepository
-                .findByUserAndTenant_TenantId(user, effectiveTenantId);
-            if (access.isPresent() && access.get().getSysUserGroup() != null
-                    && access.get().getSysUserGroup().getMenus() != null) {
-                menus.addAll(access.get().getSysUserGroup().getMenus());
-            }
-            if (menus.isEmpty() && "ROLE_SUPER_ADMIN".equals(user.getRole())) {
-                Optional<com.acquira.common.model.SysUserGroup> superGroup = groupRepository.findByGroupName("Super Admin");
-                superGroup.ifPresent(g -> { if (g.getMenus() != null) menus.addAll(g.getMenus()); });
-            }
+            menus = menuVisibilityService.visibleMenus(user.getUsername(), effectiveTenantId.intValue(), superAdmin);
+            permissions = permissionEvaluator.permissionsFor(user.getUsername(), effectiveTenantId.intValue(), superAdmin);
         }
 
         Map<String, Object> response = new HashMap<>();
         response.put("status", "authenticated");
         response.put("jwt", accessToken);
-        response.put("refreshToken", refreshToken);
+        // refresh token: HttpOnly cookie only (pentest H6)
         response.put("allowedTenants", allowedTenants);
         response.put("defaultTenantId", effectiveTenantId);
         response.put("roles", userDetails.getAuthorities());
         response.put("menus", menus);
+        response.put("permissions", permissions);
         response.put("username", user.getUsername());
         response.put("userRole", user.getRole());
         response.put("displayName", user.getDisplayName());
         response.put("ssoProvider", user.getSsoProvider());
-        // GAP-9: Include mustChangePassword for SSO users
         if (user.isMustChangePassword()) {
             response.put("mustChangePassword", true);
         }
 
-        return ResponseEntity.ok(response);
+        ResponseCookie cookie = ResponseCookie.from("refreshToken", refreshToken)
+                .httpOnly(true).secure(true).path("/api/auth")
+                .maxAge(refreshTtlMs / 1000).sameSite("Strict").build();
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, cookie.toString())
+                .body(response);
+    }
+
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) return a;
+        return (b != null && !b.isBlank()) ? b : null;
+    }
+
+    private static String urlEncode(String s) {
+        return java.net.URLEncoder.encode(s == null ? "" : s, StandardCharsets.UTF_8);
     }
 }

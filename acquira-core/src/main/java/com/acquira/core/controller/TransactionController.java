@@ -31,6 +31,9 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/transactions")
+// M4: only the Transactions screen (frontend /transactions, <TransactionList>)
+// calls this API, so every endpoint requires that screen's VIEW grant.
+@org.springframework.security.access.prepost.PreAuthorize("@menuAccess.canAccess('/transactions')")
 public class TransactionController {
 
     @Autowired
@@ -242,7 +245,9 @@ public class TransactionController {
     }
 
     @GetMapping("/export/csv")
-    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    // Method-level @PreAuthorize REPLACES the class-level one, so the screen grant is repeated here.
+    @org.springframework.security.access.prepost.PreAuthorize(
+            "hasAnyRole('ADMIN', 'SUPER_ADMIN') and @menuAccess.canAccess('/transactions')")
     public void exportTransactionsCsv(
             @RequestParam(required = false) String mid,
             @RequestParam(required = false) String sid,
