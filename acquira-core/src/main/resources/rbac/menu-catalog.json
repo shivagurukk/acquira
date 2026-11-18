@@ -1,6 +1,42 @@
 {
     "screens": [
         {
+            "key": "mis.price-builder",
+            "icon": "Calculator",
+            "name": "Price Builder",
+            "path": "/mis/price-builder",
+            "order": 1,
+            "module": "mis",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "MIS",
+            "grantView": [
+                "Bank Admin",
+                "Business User",
+                "Super Admin"
+            ]
+        },
+        {
+            "key": "mis.fee-optimizer",
+            "icon": "Receipt",
+            "name": "Scheme Fee Optimizer",
+            "path": "/mis/fee-optimizer",
+            "order": 2,
+            "module": "mis",
+            "actions": [
+                "EDIT",
+                "VIEW"
+            ],
+            "category": "MIS",
+            "grantView": [
+                "Bank Admin",
+                "Finance User",
+                "Super Admin"
+            ]
+        },
+        {
             "key": "settings",
             "icon": "Settings",
             "name": "Settings",

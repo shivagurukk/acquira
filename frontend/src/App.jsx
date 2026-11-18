@@ -74,6 +74,11 @@ const BatchMonitoring = lazy(() => import('./pages/BatchMonitoring'));
 const IngestTrust = lazy(() => import('./pages/ops/IngestTrust'));
 const SchemeBillingReference = lazy(() => import('./pages/ops/SchemeBillingReference'));
 const DailyDigest = lazy(() => import('./pages/ops/DailyDigest'));
+// MIS — pre-sale pricing and scheme-cost control. These price and police the
+// scheme relationship rather than report the book, which is why they sit in
+// their own category rather than under BUSINESS or FINANCE.
+const PriceBuilder = lazy(() => import('./pages/mis/PriceBuilder'));
+const SchemeFeeOptimizer = lazy(() => import('./pages/mis/SchemeFeeOptimizer'));
 const GroupReports = lazy(() => import('./pages/GroupReports'));
 const FinanceSummary = lazy(() => import('./pages/finance/FinanceSummary'));
 // Profitability Report — monthly MID P&L by destination / scheme / card interchange (finance column layout)
@@ -214,6 +219,16 @@ function App() {
               <Route path="/ops/daily-digest" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><DailyDigest /></RoleGuard>
               } />
+
+              {/* MIS. No RoleGuard: the API is gated by the menu grant
+                  (@menuAccess.canAccess), and the sidebar only offers screens
+                  the user has been granted — a second, role-shaped gate here
+                  would quietly contradict the grant that is doing the work. */}
+              <Route path="/mis/price-builder" element={<PriceBuilder />} />
+              {/* Seven tabs behind one route, as the Integration Hub does, so
+                  the sidebar carries one entry rather than seven. */}
+              <Route path="/mis/fee-optimizer" element={<SchemeFeeOptimizer />} />
+              <Route path="/mis/fee-optimizer/:section" element={<SchemeFeeOptimizer />} />
               <Route path="/business/emails" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><StatementEmails /></RoleGuard>
               } />

@@ -55,7 +55,7 @@ function loadUsdDisplay() {
 // administration after), each under a mono eyebrow label. One accent —
 // teal — reserved for the active marker.
 const CAT_ORDER = [
-    'EXECUTIVE','BUSINESS','SALES','FINANCE',
+    'EXECUTIVE','BUSINESS','SALES','FINANCE','MIS',
     'MERCHANT MGT','OPERATIONS','INTERCHANGE','ADMINISTRATION','DATA INTEGRATION','GENERAL',
 ];
 const ANALYTICS_CATS = new Set(['EXECUTIVE','BUSINESS','SALES','FINANCE']);
